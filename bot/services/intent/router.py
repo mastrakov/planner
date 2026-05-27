@@ -182,12 +182,16 @@ class IntentRouter:
                 )
             return None
 
-        replies: list[str] = []
+        reply_lines: list[str] = []
         for intent in parsed.intents:
             reply = await self._dispatch(intent, user, message, history=history)
             if reply is not None:
-                replies.append(reply)
-        return "\n".join(replies) if replies else None
+                reply_lines.append(reply)
+
+        if reply_lines:
+            await message.answer("\n".join(reply_lines), parse_mode="HTML")
+
+        return "\n".join(reply_lines) if reply_lines else None
 
     async def execute_confirmed(
         self,
@@ -197,8 +201,13 @@ class IntentRouter:
         history: list[ChatHistory] | None = None,
     ) -> None:
         """Execute intents that were already confirmed by the user."""
+        reply_lines: list[str] = []
         for intent in parsed.intents:
-            await self._dispatch(intent, user, message, history=history)
+            reply = await self._dispatch(intent, user, message, history=history)
+            if reply is not None:
+                reply_lines.append(reply)
+        if reply_lines:
+            await message.answer("\n".join(reply_lines), parse_mode="HTML")
 
     async def _dispatch(
         self,
@@ -297,9 +306,8 @@ class IntentRouter:
         user: User,
         message: Message,
         history: list[ChatHistory] | None = None,
-    ) -> None:
-        result = await self._tasks.complete_task(user=user, intent=intent)
-        await message.answer(result)
+    ) -> str:
+        return await self._tasks.complete_task(user=user, intent=intent)
 
     async def _exec_delete_task(
         self,
@@ -307,9 +315,8 @@ class IntentRouter:
         user: User,
         message: Message,
         history: list[ChatHistory] | None = None,
-    ) -> None:
-        result = await self._tasks.delete_task(user=user, intent=intent)
-        await message.answer(result)
+    ) -> str:
+        return await self._tasks.delete_task(user=user, intent=intent)
 
     async def _exec_update_task(
         self,
@@ -317,9 +324,8 @@ class IntentRouter:
         user: User,
         message: Message,
         history: list[ChatHistory] | None = None,
-    ) -> None:
-        result = await self._tasks.update_task(user=user, intent=intent)
-        await message.answer(result)
+    ) -> str:
+        return await self._tasks.update_task(user=user, intent=intent)
 
     async def _exec_create_event(
         self,
@@ -327,9 +333,8 @@ class IntentRouter:
         user: User,
         message: Message,
         history: list[ChatHistory] | None = None,
-    ) -> None:
-        result = await self._calendar.create_event(user=user, intent=intent)
-        await message.answer(result)
+    ) -> str:
+        return await self._calendar.create_event(user=user, intent=intent)
 
     async def _exec_list_events(
         self,
@@ -347,9 +352,8 @@ class IntentRouter:
         user: User,
         message: Message,
         history: list[ChatHistory] | None = None,
-    ) -> None:
-        result = await self._reminders.create(user=user, intent=intent)
-        await message.answer(result)
+    ) -> str:
+        return await self._reminders.create(user=user, intent=intent)
 
     async def _exec_list_reminders(
         self,
@@ -367,9 +371,8 @@ class IntentRouter:
         user: User,
         message: Message,
         history: list[ChatHistory] | None = None,
-    ) -> None:
-        result = await self._reminders.delete_reminder(user=user, intent=intent)
-        await message.answer(result)
+    ) -> str:
+        return await self._reminders.delete_reminder(user=user, intent=intent)
 
     async def _exec_update_reminder(
         self,
@@ -377,9 +380,8 @@ class IntentRouter:
         user: User,
         message: Message,
         history: list[ChatHistory] | None = None,
-    ) -> None:
-        result = await self._reminders.update_reminder(user=user, intent=intent)
-        await message.answer(result)
+    ) -> str:
+        return await self._reminders.update_reminder(user=user, intent=intent)
 
     async def _exec_briefing(
         self,
