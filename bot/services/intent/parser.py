@@ -122,14 +122,7 @@ class IntentParser:
                 raw = await _parse_with_claude(self._get_anthropic_client(), system, history_messages, text)
 
             data = json.loads(raw)
-            # Set user timezone context so Pydantic validators can correctly interpret
-            # naive datetimes returned by the AI (without UTC offset) as local user time.
-            from bot.services.intent.models import _user_tz_ctx
-            token = _user_tz_ctx.set(user.timezone)
-            try:
-                parsed = ParsedResponse.model_validate(data)
-            finally:
-                _user_tz_ctx.reset(token)
+            parsed = ParsedResponse.model_validate(data, context={"tz": user.timezone})
             intent_types = [i.type for i in parsed.intents]
             logger.debug(
                 "Parsed intents=%s confidence=%.2f clarification=%r",

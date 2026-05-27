@@ -3,35 +3,32 @@ from typing import Annotated, Literal
 
 import pytz
 from pydantic import BaseModel, Field, field_validator
-
-# Module-level variable set by IntentParser before validating each response.
-# Pydantic validators are class-level so we use a contextvar to thread the user tz through.
-from contextvars import ContextVar
-
-_user_tz_ctx: ContextVar[str] = ContextVar("_user_tz_ctx", default="UTC")
+from pydantic import ValidationInfo
 
 
-def _to_utc_naive(v: datetime | None) -> datetime | None:
+def _to_utc_naive(v: datetime | None, tz_name: str = "UTC") -> datetime | None:
     """Convert datetime to UTC naive for DB storage.
 
     - Aware datetime (has tzinfo): convert to UTC, strip tzinfo.
     - Naive datetime (no tzinfo): AI returned time without offset — treat it as
-      being in the user's local timezone (from _user_tz_ctx), then convert to UTC.
+      being in the user's local timezone (tz_name), then convert to UTC.
     """
     if v is None:
         return None
     if v.tzinfo is not None:
-        # Already has offset — straightforward UTC conversion
         return v.astimezone(timezone.utc).replace(tzinfo=None)
-    # Naive — assume user's timezone
-    tz_name = _user_tz_ctx.get()
     try:
         tz = pytz.timezone(tz_name)
         localized = tz.localize(v, is_dst=None)
     except Exception:
-        # Fallback: treat as UTC if tz is invalid or DST ambiguous
         return v
     return localized.astimezone(pytz.utc).replace(tzinfo=None)
+
+
+def _tz_from_info(info: ValidationInfo) -> str:
+    if info.context and isinstance(info.context, dict):
+        return info.context.get("tz", "UTC")
+    return "UTC"
 
 
 class CreateTaskIntent(BaseModel):
@@ -48,13 +45,13 @@ class CreateTaskIntent(BaseModel):
 
     @field_validator("due_date", mode="after")
     @classmethod
-    def normalize_due_date(cls, v: datetime | None) -> datetime | None:
-        return _to_utc_naive(v)
+    def normalize_due_date(cls, v: datetime | None, info: ValidationInfo) -> datetime | None:
+        return _to_utc_naive(v, _tz_from_info(info))
 
     @field_validator("scheduled_at", mode="after")
     @classmethod
-    def normalize_scheduled_at(cls, v: datetime | None) -> datetime | None:
-        return _to_utc_naive(v)
+    def normalize_scheduled_at(cls, v: datetime | None, info: ValidationInfo) -> datetime | None:
+        return _to_utc_naive(v, _tz_from_info(info))
 
 
 class CreateEventIntent(BaseModel):
@@ -67,8 +64,8 @@ class CreateEventIntent(BaseModel):
 
     @field_validator("starts_at", "ends_at", mode="after")
     @classmethod
-    def normalize_datetimes(cls, v: datetime | None) -> datetime | None:
-        return _to_utc_naive(v)
+    def normalize_datetimes(cls, v: datetime | None, info: ValidationInfo) -> datetime | None:
+        return _to_utc_naive(v, _tz_from_info(info))
 
 
 class CreateReminderIntent(BaseModel):
@@ -80,8 +77,8 @@ class CreateReminderIntent(BaseModel):
 
     @field_validator("remind_at", mode="after")
     @classmethod
-    def normalize_remind_at(cls, v: datetime | None) -> datetime | None:
-        return _to_utc_naive(v)
+    def normalize_remind_at(cls, v: datetime | None, info: ValidationInfo) -> datetime | None:
+        return _to_utc_naive(v, _tz_from_info(info))
 
 
 class ListTasksIntent(BaseModel):
@@ -111,13 +108,13 @@ class UpdateTaskIntent(BaseModel):
 
     @field_validator("new_due_date", mode="after")
     @classmethod
-    def normalize_new_due_date(cls, v: datetime | None) -> datetime | None:
-        return _to_utc_naive(v)
+    def normalize_new_due_date(cls, v: datetime | None, info: ValidationInfo) -> datetime | None:
+        return _to_utc_naive(v, _tz_from_info(info))
 
     @field_validator("new_scheduled_at", mode="after")
     @classmethod
-    def normalize_new_scheduled_at(cls, v: datetime | None) -> datetime | None:
-        return _to_utc_naive(v)
+    def normalize_new_scheduled_at(cls, v: datetime | None, info: ValidationInfo) -> datetime | None:
+        return _to_utc_naive(v, _tz_from_info(info))
 
 
 class ListEventsIntent(BaseModel):
@@ -127,8 +124,8 @@ class ListEventsIntent(BaseModel):
 
     @field_validator("date_from", "date_to", mode="after")
     @classmethod
-    def normalize_dates(cls, v: datetime | None) -> datetime | None:
-        return _to_utc_naive(v)
+    def normalize_dates(cls, v: datetime | None, info: ValidationInfo) -> datetime | None:
+        return _to_utc_naive(v, _tz_from_info(info))
 
 
 class ListRemindersIntent(BaseModel):
@@ -148,8 +145,8 @@ class UpdateReminderIntent(BaseModel):
 
     @field_validator("new_remind_at", mode="after")
     @classmethod
-    def normalize_new_remind_at(cls, v: datetime | None) -> datetime | None:
-        return _to_utc_naive(v)
+    def normalize_new_remind_at(cls, v: datetime | None, info: ValidationInfo) -> datetime | None:
+        return _to_utc_naive(v, _tz_from_info(info))
 
 
 class GetBriefingIntent(BaseModel):
@@ -160,8 +157,8 @@ class GetBriefingIntent(BaseModel):
 
     @field_validator("target_date", mode="after")
     @classmethod
-    def normalize_target_date(cls, v: datetime | None) -> datetime | None:
-        return _to_utc_naive(v)
+    def normalize_target_date(cls, v: datetime | None, info: ValidationInfo) -> datetime | None:
+        return _to_utc_naive(v, _tz_from_info(info))
 
 
 class GetAnalyticsIntent(BaseModel):

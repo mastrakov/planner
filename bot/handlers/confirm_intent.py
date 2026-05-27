@@ -90,7 +90,7 @@ async def handle_confirmation(
     from bot.services.tasks import TaskService
 
     try:
-        parsed = ParsedResponse.model_validate(parsed_data)
+        parsed = ParsedResponse.model_validate(parsed_data, context={"tz": user.timezone})
         # NOTE: we call execute_confirmed which bypasses confidence/destructive checks entirely.
         # Do NOT mutate parsed.confidence here — ParsedResponse may have validate_assignment
         # enabled in future and mutation would raise ValidationError.
