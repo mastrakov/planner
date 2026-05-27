@@ -102,9 +102,12 @@ class IntentParser:
     ) -> ParsedResponse:
         task_lists = await self._task_repo.get_lists_by_user(user.id)
         list_names = [f"{tl.emoji} {tl.name}" for tl in task_lists]
+        lists_with_ids = [(tl.id, tl.emoji, tl.name) for tl in task_lists]
 
         current_dt = _current_dt_for_user(user.timezone)
-        system = build_system_prompt(current_dt, user.timezone, list_names)
+        system = build_system_prompt(
+            current_dt, user.timezone, list_names, task_lists_with_ids=lists_with_ids
+        )
         history_messages = _history_to_messages(history)
 
         logger.debug(

@@ -3,6 +3,34 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.db.models import User
 
+# Popular timezones shown as buttons during onboarding and in settings
+POPULAR_TIMEZONES = [
+    ("🇬🇧 Лондон (UTC+0/+1)", "Europe/London"),
+    ("🇵🇹 Лиссабон (UTC+0/+1)", "Europe/Lisbon"),
+    ("🇫🇷 Париж (UTC+1/+2)", "Europe/Paris"),
+    ("🇩🇪 Берлин (UTC+1/+2)", "Europe/Berlin"),
+    ("🇪🇸 Мадрид (UTC+1/+2)", "Europe/Madrid"),
+    ("🇮🇹 Рим (UTC+1/+2)", "Europe/Rome"),
+    ("🇵🇱 Варшава (UTC+1/+2)", "Europe/Warsaw"),
+    ("🇳🇱 Амстердам (UTC+1/+2)", "Europe/Amsterdam"),
+    ("🇨🇭 Цюрих (UTC+1/+2)", "Europe/Zurich"),
+    ("🇸🇪 Стокгольм (UTC+1/+2)", "Europe/Stockholm"),
+    ("🇫🇮 Хельсинки (UTC+2/+3)", "Europe/Helsinki"),
+    ("🇷🇴 Бухарест (UTC+2/+3)", "Europe/Bucharest"),
+    ("🇺🇦 Киев (UTC+2/+3)", "Europe/Kyiv"),
+    ("🇧🇾 Минск (UTC+3)", "Europe/Minsk"),
+    ("🇷🇺 Москва (UTC+3)", "Europe/Moscow"),
+    ("🇷🇺 Калининград (UTC+2)", "Europe/Kaliningrad"),
+]
+
+
+def timezone_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for label, tz in POPULAR_TIMEZONES:
+        builder.button(text=label, callback_data=f"tz_set:{tz}")
+    builder.adjust(2)
+    return builder.as_markup()
+
 
 def settings_keyboard(user: User, google_connected: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()

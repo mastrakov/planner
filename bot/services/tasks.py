@@ -1,6 +1,8 @@
+from dataclasses import dataclass
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import Priority, User
+from bot.db.models import Priority, Task, TaskList, User
 from bot.db.repo.tasks import TaskRepo
 from bot.services.intent.models import (
     CompleteTaskIntent,
@@ -10,6 +12,15 @@ from bot.services.intent.models import (
     UpdateTaskIntent,
 )
 from bot.utils.dt import fmt_date, fmt_full, now_utc
+
+
+@dataclass
+class TaskCreateResult:
+    """Return value of TaskService.create_task_smart."""
+    task: Task
+    target_list: TaskList
+    auto_assigned: bool  # True if list was auto-assigned with high confidence
+    low_confidence: bool  # True if list confidence was < 0.8 and multiple lists exist
 
 DEFAULT_LISTS = [
     ("Работа", "💼", "#4A90D9"),
@@ -29,6 +40,63 @@ class TaskService:
             return
         for i, (name, emoji, color) in enumerate(DEFAULT_LISTS):
             await self._repo.create_list(user_id, name, emoji, color, position=i)
+
+    async def create_task_smart(self, user: User, intent: CreateTaskIntent) -> TaskCreateResult | str:
+        """Create a task applying AI list classification logic.
+
+        Returns:
+            TaskCreateResult — when a task was successfully created.
+            str — error message when no lists are available.
+
+        Classification rules:
+        - Single list → always use it (auto_assigned=True, low_confidence=False).
+        - Multiple lists + confidence >= 0.8 → auto-assign to suggested_list_id (or first).
+        - Multiple lists + confidence < 0.8 → assign to best candidate but mark low_confidence=True
+          so the caller can show a list-selection keyboard.
+        """
+        lists = await self._repo.get_lists_by_user(user.id)
+        if not lists:
+            return "У вас нет списков задач. Используйте /start для создания."
+
+        auto_assigned = False
+        low_confidence = False
+
+        if len(lists) == 1:
+            target_list = lists[0]
+            auto_assigned = True
+        elif intent.suggested_list_id is not None and intent.list_confidence >= 0.8:
+            target_list = next((l for l in lists if l.id == intent.suggested_list_id), lists[0])
+            auto_assigned = True
+        else:
+            # Low confidence or no suggestion — pick best candidate, flag for user choice
+            if intent.suggested_list_id is not None:
+                target_list = next((l for l in lists if l.id == intent.suggested_list_id), lists[0])
+            elif intent.list_name:
+                target_list = next(
+                    (l for l in lists if intent.list_name.lower() in l.name.lower()),
+                    lists[0],
+                )
+            else:
+                target_list = lists[0]
+            low_confidence = True if len(lists) > 1 else False
+
+        task = await self._repo.create(
+            user_id=user.id,
+            list_id=target_list.id,
+            title=intent.title,
+            priority=intent.priority,
+            due_date=intent.due_date,
+        )
+        return TaskCreateResult(
+            task=task,
+            target_list=target_list,
+            auto_assigned=auto_assigned,
+            low_confidence=low_confidence,
+        )
+
+    async def get_lists(self, user_id: int) -> list[TaskList]:
+        """Return the user's task lists sorted by position."""
+        return await self._repo.get_lists_by_user(user_id)
 
     async def create_task(self, user: User, intent: CreateTaskIntent) -> str:
         lists = await self._repo.get_lists_by_user(user.id)

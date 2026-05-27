@@ -27,5 +27,5 @@ async def cmd_weekly(message: Message, user: User, session: AsyncSession) -> Non
 @router.message(Command("morning"))
 async def cmd_morning(message: Message, user: User, session: AsyncSession) -> None:
     service = BriefingService(session)
-    text = await service.build_morning_briefing(user)
-    await message.answer(text, parse_mode="HTML")
+    result = await service.build_morning(user)
+    await message.answer(result.text, parse_mode="HTML", reply_markup=result.combined_keyboard)

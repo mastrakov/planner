@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.db.models import AIModel, User
 from bot.db.repo.integrations import IntegrationRepo
 from bot.db.repo.users import UserRepo
-from bot.keyboards.settings import model_choice_keyboard, settings_keyboard
+from bot.keyboards.settings import model_choice_keyboard, settings_keyboard, timezone_keyboard
 
 router = Router()
 
@@ -82,11 +82,26 @@ async def process_briefing_time(message: Message, user: User, session: AsyncSess
     await message.answer(f"Время брифинга установлено: {text}")
 
 
+@router.callback_query(F.data.startswith("tz_set:"))
+async def cb_tz_set_settings(callback: CallbackQuery, user: User, session: AsyncSession, state: FSMContext) -> None:
+    tz_name = callback.data.split(":", 1)[1]  # type: ignore[union-attr]
+    repo = UserRepo(session)
+    await repo.update(user, timezone=tz_name)
+    await state.clear()
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        f"✅ Часовой пояс установлен: <b>{tz_name}</b>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "settings_timezone")
 async def cb_settings_timezone(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(SettingsForm.waiting_timezone)
     await callback.message.answer(  # type: ignore[union-attr]
-        "Введите часовой пояс (например, Europe/Moscow, Asia/Yekaterinburg):"
+        "Выберите часовой пояс или введите вручную (например, <code>Asia/Novosibirsk</code>):",
+        parse_mode="HTML",
+        reply_markup=timezone_keyboard(),
     )
     await callback.answer()
 
@@ -99,13 +114,13 @@ async def process_timezone(message: Message, user: User, session: AsyncSession, 
 
         pytz.timezone(tz_name)
     except Exception:
-        await message.answer("Неверный часовой пояс. Попробуйте ещё раз (например, Europe/Moscow).")
+        await message.answer("Неверный часовой пояс. Попробуйте ещё раз (например, <code>Europe/Moscow</code>).", parse_mode="HTML")
         return
 
     repo = UserRepo(session)
     await repo.update(user, timezone=tz_name)
     await state.clear()
-    await message.answer(f"Часовой пояс установлен: {tz_name}")
+    await message.answer(f"✅ Часовой пояс установлен: <b>{tz_name}</b>", parse_mode="HTML")
 
 
 @router.callback_query(F.data == "settings_back")

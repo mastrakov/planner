@@ -63,7 +63,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)  # telegram user_id
     username: Mapped[str | None] = mapped_column(String(64))
     first_name: Mapped[str] = mapped_column(String(128))
-    timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     ai_model: Mapped[str] = mapped_column(Enum(AIModel), default=AIModel.CLAUDE)
     briefing_time: Mapped[time] = mapped_column(Time, default=time(8, 0))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

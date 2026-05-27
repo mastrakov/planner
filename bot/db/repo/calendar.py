@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import CalendarEvent
@@ -55,7 +56,12 @@ class CalendarRepo:
         return list(result.scalars().all())
 
     async def get_by_id(self, event_id: int) -> CalendarEvent | None:
-        return await self._session.get(CalendarEvent, event_id)
+        result = await self._session.execute(
+            select(CalendarEvent)
+            .where(CalendarEvent.id == event_id)
+            .options(selectinload(CalendarEvent.reminders))
+        )
+        return result.scalar_one_or_none()
 
     async def delete(self, event: CalendarEvent) -> None:
         await self._session.delete(event)

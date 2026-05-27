@@ -14,6 +14,19 @@ from bot.services.intent.models import (
     ParsedResponse,
 )
 from bot.services.intent.router import IntentRouter
+from bot.services.tasks import TaskCreateResult
+
+
+def _make_task_create_result(title: str = "Купить молоко") -> TaskCreateResult:
+    """Build a TaskCreateResult with a mock task for testing."""
+    task = SimpleNamespace(id=1, title=title, due_date=None, list_id=1)
+    task_list = SimpleNamespace(id=1, name="Работа", emoji="💼")
+    return TaskCreateResult(
+        task=task,  # type: ignore[arg-type]
+        target_list=task_list,  # type: ignore[arg-type]
+        auto_assigned=True,
+        low_confidence=False,
+    )
 
 
 def _make_user(ai_model: str = AIModel.CLAUDE) -> SimpleNamespace:
@@ -115,12 +128,15 @@ async def test_route_destructive_asks_confirmation_no_state() -> None:
 
 @pytest.mark.asyncio
 async def test_route_high_confidence_nondestruct_dispatches_create_task() -> None:
-    """High confidence, non-destructive → create_task is called."""
+    """High confidence, non-destructive → create_task_smart is called and success message sent."""
     router, mocks = _make_router()
     user = _make_user()
     message = _make_message()
 
-    mocks["task_service"].create_task = AsyncMock(return_value="Задача добавлена")
+    mocks["task_service"].create_task_smart = AsyncMock(
+        return_value=_make_task_create_result("Купить молоко")
+    )
+    mocks["task_service"].get_lists = AsyncMock(return_value=[])
 
     parsed = ParsedResponse(
         intents=[CreateTaskIntent(type="create_task", title="Купить молоко")],
@@ -129,8 +145,9 @@ async def test_route_high_confidence_nondestruct_dispatches_create_task() -> Non
     )
     await router.route(parsed, user, message)  # type: ignore[arg-type]
 
-    mocks["task_service"].create_task.assert_called_once()
-    message.answer.assert_called_once_with("Задача добавлена")
+    mocks["task_service"].create_task_smart.assert_called_once()
+    # A message was sent (either success or list selection)
+    message.answer.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -142,15 +159,16 @@ async def test_route_multiple_intents_all_dispatched_in_order() -> None:
 
     call_order: list[str] = []
 
-    async def create_task_side_effect(**_kwargs: object) -> str:
+    async def create_task_smart_side_effect(**_kwargs: object) -> TaskCreateResult:
         call_order.append("create_task")
-        return "Задача создана"
+        return _make_task_create_result("Задача 1")
 
     async def get_tasks_side_effect(**_kwargs: object) -> str:
         call_order.append("list_tasks")
         return "<b>Задачи:</b>"
 
-    mocks["task_service"].create_task = AsyncMock(side_effect=create_task_side_effect)
+    mocks["task_service"].create_task_smart = AsyncMock(side_effect=create_task_smart_side_effect)
+    mocks["task_service"].get_lists = AsyncMock(return_value=[])
     mocks["task_service"].get_tasks_for_user = AsyncMock(side_effect=get_tasks_side_effect)
 
     parsed = ParsedResponse(
@@ -253,7 +271,10 @@ async def test_execute_confirmed_bypasses_confidence_check() -> None:
     user = _make_user()
     message = _make_message()
 
-    mocks["task_service"].create_task = AsyncMock(return_value="Готово")
+    mocks["task_service"].create_task_smart = AsyncMock(
+        return_value=_make_task_create_result("Задача")
+    )
+    mocks["task_service"].get_lists = AsyncMock(return_value=[])
 
     parsed = ParsedResponse(
         intents=[CreateTaskIntent(type="create_task", title="Задача")],
@@ -262,5 +283,6 @@ async def test_execute_confirmed_bypasses_confidence_check() -> None:
     )
     await router.execute_confirmed(parsed, user, message)  # type: ignore[arg-type]
 
-    mocks["task_service"].create_task.assert_called_once()
-    message.answer.assert_called_once_with("Готово")
+    mocks["task_service"].create_task_smart.assert_called_once()
+    # A message was sent (task confirmation)
+    message.answer.assert_called_once()

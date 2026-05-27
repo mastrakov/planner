@@ -5,9 +5,26 @@ def build_system_prompt(
     current_datetime: datetime,
     timezone: str,
     task_lists: list[str],
+    task_lists_with_ids: list[tuple[int, str, str]] | None = None,
 ) -> str:
-    lists_str = ", ".join(task_lists) if task_lists else "нет списков"
+    """Build the system prompt for intent parsing.
+
+    Args:
+        current_datetime: User's current local datetime (with tzinfo).
+        timezone: User's IANA timezone string.
+        task_lists: List of formatted list names (legacy, kept for compat).
+        task_lists_with_ids: Optional list of (id, emoji, name) tuples for classification.
+    """
     dt_str = current_datetime.strftime("%d.%m.%Y %H:%M %z")  # includes UTC offset, e.g. +0300
+
+    # Build list display string
+    if task_lists_with_ids:
+        lists_str = ", ".join(f"{emoji} {name} (id={lid})" for lid, emoji, name in task_lists_with_ids)
+    elif task_lists:
+        lists_str = ", ".join(task_lists)
+    else:
+        lists_str = "нет списков"
+
     return f"""Ты — AI-ассистент в Telegram-боте для управления задачами и календарём.
 
 Сейчас: {dt_str} (часовой пояс: {timezone})
@@ -25,7 +42,14 @@ def build_system_prompt(
 Поддерживаемые типы намерений:
 
 1. create_task — создать задачу
-   {{"type": "create_task", "title": "...", "list_name": "...", "priority": "low|medium|high", "due_date": "ISO datetime или null"}}
+   {{"type": "create_task", "title": "...", "list_name": "...", "priority": "low|medium|high", "due_date": "ISO datetime или null", "suggested_list_id": <число или null>, "suggested_list_name": "...", "list_confidence": <0.0-1.0>}}
+
+   Правила для create_task:
+   - **priority**: ОБЯЗАТЕЛЬНО определи приоритет из текста задачи (высокий для срочных/важных, низкий для рутинных). Если не указан явно — выведи сам.
+   - **due_date**: извлеки дату/время если упомянуты («до пятницы», «завтра», «31 мая»). Иначе null.
+   - **suggested_list_id**: ID наиболее подходящего списка из списков пользователя (используй ID из подсказок выше). null если нет подходящего.
+   - **suggested_list_name**: название выбранного списка для отображения пользователю.
+   - **list_confidence**: уверенность в выборе списка от 0.0 до 1.0. >= 0.8 — автоматически назначить, < 0.8 — предложить варианты.
 
 2. create_event — создать событие в календаре
    {{"type": "create_event", "title": "...", "starts_at": "ISO datetime", "ends_at": "ISO datetime или null", "reminder_minutes": [число, ...] или []}}

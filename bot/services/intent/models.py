@@ -17,8 +17,12 @@ class CreateTaskIntent(BaseModel):
     type: Literal["create_task"]
     title: str
     list_name: str | None = None
-    priority: Literal["low", "medium", "high"] = "medium"
-    due_date: datetime | None = None
+    priority: Literal["low", "medium", "high"] = "medium"  # AI determines from text if not explicit
+    due_date: datetime | None = None                        # AI extracts from text
+    # List auto-classification fields
+    suggested_list_id: int | None = None     # ID of the list AI selected
+    suggested_list_name: str | None = None  # Display name for the suggested list
+    list_confidence: float = 0.0             # Confidence in list classification (0.0 – 1.0)
 
     @field_validator("due_date", mode="after")
     @classmethod

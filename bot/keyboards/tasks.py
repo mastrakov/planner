@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.db.models import Task, TaskList
@@ -68,4 +68,38 @@ def confirm_keyboard(action: str) -> InlineKeyboardMarkup:
     builder.button(text="Да, подтвердить", callback_data=f"confirm:{action}")
     builder.button(text="Отмена", callback_data="cancel")
     builder.adjust(2)
+    return builder.as_markup()
+
+
+def task_created_keyboard(task_id: int, has_due_date: bool) -> InlineKeyboardMarkup:
+    """Keyboard shown after task creation.
+    Shows '📅 Добавить дедлайн' if task has no due_date.
+    """
+    builder = InlineKeyboardBuilder()
+    if not has_due_date:
+        builder.button(text="📅 Добавить дедлайн", callback_data=f"task_set_deadline:{task_id}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def select_list_keyboard(task_id: int, lists: list[TaskList]) -> InlineKeyboardMarkup:
+    """Keyboard for choosing a list when AI confidence < 0.8. Shows up to 3 lists."""
+    builder = InlineKeyboardBuilder()
+    for lst in lists[:3]:
+        builder.button(
+            text=f"{lst.emoji} {lst.name}",
+            callback_data=f"task_assign_list:{task_id}:{lst.id}",
+        )
+    builder.button(text="Отмена", callback_data="cancel")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def briefing_task_keyboard(task_id: int, show_delete: bool = False) -> InlineKeyboardMarkup:
+    """Inline keyboard for a task row in morning briefing."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Выполнено", callback_data=f"task_complete:{task_id}")
+    if show_delete:
+        builder.button(text="Удалить", callback_data=f"task_delete:{task_id}")
+    builder.adjust(2 if show_delete else 1)
     return builder.as_markup()

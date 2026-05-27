@@ -37,9 +37,8 @@ async def handle_text(message: Message, user: User, session: AsyncSession, state
     from bot.services.tasks import TaskService
 
     history_repo = ChatHistoryRepo(session)
-    await history_repo.add(user.id, "user", message.text)
-
     history = await history_repo.get_recent(user.id, limit=10)
+    await history_repo.add(user.id, "user", message.text)
     task_repo = TaskRepo(session)
     parser = IntentParser(task_repo)
 

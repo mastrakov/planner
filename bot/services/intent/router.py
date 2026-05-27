@@ -146,8 +146,7 @@ class IntentRouter:
         logger.debug("Dispatching intent=%s for user_id=%d", intent.type, user.id)
         try:
             if isinstance(intent, CreateTaskIntent):
-                result = await self._tasks.create_task(user=user, intent=intent)
-                await message.answer(result)
+                await self._dispatch_create_task(intent, user, message)
 
             elif isinstance(intent, ListTasksIntent):
                 result = await self._tasks.get_tasks_for_user(user=user, intent=intent)
@@ -190,8 +189,8 @@ class IntentRouter:
                 await message.answer(result)
 
             elif isinstance(intent, GetBriefingIntent):
-                result = await self._briefing.build_morning_briefing(user=user)
-                await message.answer(result, parse_mode="HTML")
+                briefing = await self._briefing.build_morning(user=user)
+                await message.answer(briefing.text, parse_mode="HTML", reply_markup=briefing.combined_keyboard)
 
             elif isinstance(intent, GetAnalyticsIntent):
                 result = await self._analytics.get_stats(user=user, period=intent.period)
@@ -203,6 +202,43 @@ class IntentRouter:
         except Exception:
             logger.exception("Error dispatching intent %s for user %d", intent.type, user.id)
             await message.answer("Произошла ошибка при выполнении команды. Попробуйте ещё раз.")
+
+    async def _dispatch_create_task(
+        self,
+        intent: CreateTaskIntent,
+        user: User,
+        message: Message,
+    ) -> None:
+        """Handle create_task with list auto-classification and deadline button."""
+        from bot.keyboards.tasks import select_list_keyboard, task_created_keyboard
+        from bot.services.tasks import TaskCreateResult
+
+        result = await self._tasks.create_task_smart(user=user, intent=intent)
+
+        # No lists — error string returned
+        if isinstance(result, str):
+            await message.answer(result)
+            return
+
+        task = result.task
+        target_list = result.target_list
+
+        if result.low_confidence:
+            # Ask user which list to use — task was tentatively placed in the first candidate
+            lists = await self._tasks.get_lists(user.id)
+            # Put the suggested list first
+            if intent.suggested_list_id is not None:
+                lists = sorted(lists, key=lambda l: 0 if l.id == intent.suggested_list_id else 1)
+            text = f"В какой список добавить «{task.title}»?"
+            kb = select_list_keyboard(task.id, lists)
+            await message.answer(text, reply_markup=kb)
+        else:
+            # High confidence or single list — confirm to user
+            text = f"Добавил в {target_list.emoji} {target_list.name}: «{task.title}»"
+            kb = task_created_keyboard(task.id, has_due_date=task.due_date is not None)
+            # Only attach keyboard if there's at least one button (no deadline → show deadline button)
+            has_buttons = not task.due_date
+            await message.answer(text, reply_markup=kb if has_buttons else None)
 
     async def _handle_ai_chat(
         self,

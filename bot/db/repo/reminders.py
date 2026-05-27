@@ -7,6 +7,9 @@ from bot.db.models import Reminder, RepeatType
 from bot.utils.dt import now_utc
 
 
+
+
+
 def _add_month(dt: datetime) -> datetime:
     """Advance datetime by exactly one calendar month."""
     month = dt.month + 1
@@ -92,3 +95,27 @@ class ReminderRepo:
     async def delete(self, reminder: Reminder) -> None:
         await self._session.delete(reminder)
         await self._session.flush()
+
+    async def has_reminder_for_event(self, event_id: int) -> bool:
+        """Return True if there is at least one unsent reminder linked to the event."""
+        result = await self._session.execute(
+            select(Reminder.id)
+            .where(Reminder.event_id == event_id)
+            .where(Reminder.is_sent.is_(False))
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def has_reminder_for_task_today(self, task_id: int) -> bool:
+        """Return True if there is at least one unsent standalone reminder whose title
+        references the task (heuristic: matched by task_id stored as title suffix).
+        In practice, we check by task_id tag embedded in title as 'task:{task_id}'.
+        """
+        result = await self._session.execute(
+            select(Reminder.id)
+            .where(Reminder.event_id.is_(None))
+            .where(Reminder.is_sent.is_(False))
+            .where(Reminder.title.contains(f"task:{task_id}:"))
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None

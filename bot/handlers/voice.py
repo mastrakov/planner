@@ -40,9 +40,8 @@ async def handle_voice(message: Message, user: User, session: AsyncSession, bot:
     await message.answer(f"Распознано: «{text}»")
 
     history_repo = ChatHistoryRepo(session)
-    await history_repo.add(user.id, "user", f"[голосовое] {text}")
-
     history = await history_repo.get_recent(user.id, limit=10)
+    await history_repo.add(user.id, "user", f"[голосовое] {text}")
     task_repo = TaskRepo(session)
     parser = IntentParser(task_repo)
     parsed = await parser.parse(text, user, history)

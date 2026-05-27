@@ -280,7 +280,7 @@ IntentParser.parse(text, user, history)
 
 ```python
 ParsedIntent = Annotated[
-    CreateTaskIntent        # create_task
+    CreateTaskIntent        # create_task  (с классификацией списка, приоритетом, дедлайном)
     | CreateEventIntent     # create_event  (reminder_minutes: list[int])
     | CreateReminderIntent  # create_reminder
     | ListTasksIntent       # list_tasks
@@ -304,6 +304,30 @@ class ParsedResponse(BaseModel):
 
 DESTRUCTIVE_INTENT_TYPES = {"delete_task", "delete_reminder"}
 ```
+
+### CreateTaskIntent — автоклассификация и приоритет
+
+```python
+class CreateTaskIntent(BaseModel):
+    type: Literal["create_task"]
+    title: str
+    priority: Literal["low", "medium", "high"] = "medium"  # AI определяет из текста
+    due_date: date | None = None                            # AI извлекает из текста
+    suggested_list_id: int | None = None     # ID списка, определённого AI
+    suggested_list_name: str | None = None   # Название для отображения пользователю
+    list_confidence: float = 0.0             # уверенность в классификации (0.0 – 1.0)
+```
+
+**Логика классификации списка:**
+- System prompt включает все списки пользователя (id, name, emoji)
+- AI анализирует текст задачи и возвращает `suggested_list_id` + `list_confidence`
+- `list_confidence >= 0.8` → список подставляется автоматически, бот сообщает: «Добавил в 💼 Работа»
+- `list_confidence < 0.8` → бот показывает inline-кнопки с топ-3 вариантами списков для выбора пользователем
+- Если у пользователя только один список — всегда используется он без вопросов
+
+**Логика дедлайна:**
+- AI извлекает дату из текста («до пятницы», «завтра», «31 мая»)
+- Если `due_date is None` — бот добавляет inline-кнопку «📅 Добавить дедлайн» под сообщением о создании задачи
 
 ### CreateEventIntent и напоминания
 
@@ -384,6 +408,20 @@ scheduler.add_job(check_reminders,        "interval", minutes=1)
 ```
 
 **`send_morning_briefings`** — проходит по всем активным пользователям, у кого `briefing_time` совпадает с текущим часом в их часовом поясе (допуск: первые 5 минут часа). В понедельник дополнительно отправляет недельный план.
+
+`BriefingService.build_morning(user)` собирает:
+- просроченные задачи (due_date < today, completed_at IS NULL)
+- задачи на сегодня (due_date = today), отсортированные по priority DESC
+- задачи с priority=high и due_date IS NULL (не более 5)
+- события на сегодня из `calendar_events`
+- для каждого события: проверяет наличие связанных записей в `reminders` — если нет, помечает событие как «без напоминания» для показа кнопки
+- для задач с дедлайном сегодня: аналогично проверяет напоминания
+
+`BriefingService.build_weekly(user)` собирает:
+- задачи с due_date в диапазоне [сегодня, +6 дней], сгруппированные по списку, отсортированные по due_date + priority
+- задачи с priority=high и due_date IS NULL (не более 5)
+- события на неделю из `calendar_events`, сгруппированные по дням
+- для каждого события: флаг «без напоминания» для показа кнопок
 
 **`send_weekly_summary`** — та же логика: воскресенье, 20:xx по часовому поясу пользователя.
 

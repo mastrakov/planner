@@ -27,12 +27,18 @@ async def send_morning_briefings(bot: Bot) -> None:
                 briefing_time: time = user.briefing_time
                 if local_now.hour == briefing_time.hour and local_now.minute < 5:
                     service = BriefingService(session)
-                    text = await service.build_morning_briefing(user)
-                    await bot.send_message(user.id, text, parse_mode="HTML")
+                    morning = await service.build_morning(user)
+                    await bot.send_message(
+                        user.id, morning.text, parse_mode="HTML",
+                        reply_markup=morning.combined_keyboard,
+                    )
                     # On Mondays also send weekly plan
                     if local_now.weekday() == 0:
-                        plan = await service.build_weekly_plan(user)
-                        await bot.send_message(user.id, plan, parse_mode="HTML")
+                        weekly = await service.build_weekly(user)
+                        await bot.send_message(
+                            user.id, weekly.text, parse_mode="HTML",
+                            reply_markup=weekly.combined_keyboard,
+                        )
             except Exception:
                 logger.exception("Error sending morning briefing to user %d", user.id)
 

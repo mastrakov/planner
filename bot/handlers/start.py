@@ -3,6 +3,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from bot.db.models import User
+from bot.keyboards.settings import timezone_keyboard
 from bot.services.tasks import TaskService
 
 router = Router()
@@ -54,6 +55,15 @@ async def cmd_start(message: Message, user: User, session: object) -> None:
         + HELP_TEXT,
         parse_mode="HTML",
     )
+
+    # Ask timezone on first start (default is UTC = not configured yet)
+    if user.timezone == "UTC":
+        await message.answer(
+            "⏰ <b>Выбери свой часовой пояс</b> — это нужно для правильного отображения времени напоминаний:\n\n"
+            "Если твоего города нет в списке — напиши /settings и введи вручную (например, <code>Asia/Novosibirsk</code>).",
+            parse_mode="HTML",
+            reply_markup=timezone_keyboard(),
+        )
 
 
 @router.message(Command("help"))

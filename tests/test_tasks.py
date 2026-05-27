@@ -404,3 +404,156 @@ async def test_get_tasks_filter_today_returns_only_today_tasks() -> None:
 
     assert "Сегодняшняя задача" in result
     assert "Завтрашняя задача" not in result
+
+
+# ---------------------------------------------------------------------------
+# create_task_smart — list auto-classification
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_task_smart_single_list_auto_assigned() -> None:
+    """Single list → auto_assigned=True, low_confidence=False."""
+    session = AsyncMock()
+    user = _make_user()
+    task_list = _make_list(1, "Работа")
+    created_task = _make_task(10, "Новая задача")
+
+    repo = AsyncMock()
+    repo.get_lists_by_user = AsyncMock(return_value=[task_list])
+    repo.create = AsyncMock(return_value=created_task)
+
+    service = TaskService(session, repo=repo)
+    result = await service.create_task_smart(
+        user=user,  # type: ignore[arg-type]
+        intent=CreateTaskIntent(type="create_task", title="Новая задача"),
+    )
+
+    from bot.services.tasks import TaskCreateResult
+    assert isinstance(result, TaskCreateResult)
+    assert result.auto_assigned is True
+    assert result.low_confidence is False
+    assert result.task.title == "Новая задача"
+
+
+@pytest.mark.asyncio
+async def test_create_task_smart_no_lists_returns_error_string() -> None:
+    """No lists → returns error string."""
+    session = AsyncMock()
+    user = _make_user()
+
+    repo = AsyncMock()
+    repo.get_lists_by_user = AsyncMock(return_value=[])
+
+    service = TaskService(session, repo=repo)
+    result = await service.create_task_smart(
+        user=user,  # type: ignore[arg-type]
+        intent=CreateTaskIntent(type="create_task", title="Задача"),
+    )
+
+    assert isinstance(result, str)
+    assert "нет списков" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_create_task_smart_high_confidence_uses_suggested_list() -> None:
+    """High confidence + suggested_list_id → uses that list, auto_assigned=True."""
+    session = AsyncMock()
+    user = _make_user()
+    lists = [_make_list(1, "Работа"), _make_list(2, "Дом")]
+    created_task = _make_task(10, "Задача", list_id=2)
+
+    repo = AsyncMock()
+    repo.get_lists_by_user = AsyncMock(return_value=lists)
+    repo.create = AsyncMock(return_value=created_task)
+
+    service = TaskService(session, repo=repo)
+    from bot.services.tasks import TaskCreateResult
+    result = await service.create_task_smart(
+        user=user,  # type: ignore[arg-type]
+        intent=CreateTaskIntent(
+            type="create_task",
+            title="Задача",
+            suggested_list_id=2,
+            list_confidence=0.9,
+        ),
+    )
+
+    assert isinstance(result, TaskCreateResult)
+    assert result.auto_assigned is True
+    assert result.low_confidence is False
+    # Should have created in list 2
+    create_kwargs = repo.create.call_args.kwargs
+    assert create_kwargs["list_id"] == 2
+
+
+@pytest.mark.asyncio
+async def test_create_task_smart_low_confidence_multiple_lists() -> None:
+    """Low confidence with multiple lists → low_confidence=True."""
+    session = AsyncMock()
+    user = _make_user()
+    lists = [_make_list(1, "Работа"), _make_list(2, "Дом")]
+    created_task = _make_task(10, "Задача", list_id=1)
+
+    repo = AsyncMock()
+    repo.get_lists_by_user = AsyncMock(return_value=lists)
+    repo.create = AsyncMock(return_value=created_task)
+
+    service = TaskService(session, repo=repo)
+    from bot.services.tasks import TaskCreateResult
+    result = await service.create_task_smart(
+        user=user,  # type: ignore[arg-type]
+        intent=CreateTaskIntent(
+            type="create_task",
+            title="Задача",
+            suggested_list_id=1,
+            list_confidence=0.5,  # below 0.8
+        ),
+    )
+
+    assert isinstance(result, TaskCreateResult)
+    assert result.low_confidence is True
+
+
+@pytest.mark.asyncio
+async def test_create_task_smart_no_suggestion_multiple_lists_low_confidence() -> None:
+    """No suggested_list_id with multiple lists → low_confidence=True, uses first list."""
+    session = AsyncMock()
+    user = _make_user()
+    lists = [_make_list(1, "Работа"), _make_list(2, "Дом")]
+    created_task = _make_task(10, "Сделать кое-что")
+
+    repo = AsyncMock()
+    repo.get_lists_by_user = AsyncMock(return_value=lists)
+    repo.create = AsyncMock(return_value=created_task)
+
+    service = TaskService(session, repo=repo)
+    from bot.services.tasks import TaskCreateResult
+    result = await service.create_task_smart(
+        user=user,  # type: ignore[arg-type]
+        intent=CreateTaskIntent(type="create_task", title="Сделать кое-что"),
+    )
+
+    assert isinstance(result, TaskCreateResult)
+    assert result.low_confidence is True
+
+
+@pytest.mark.asyncio
+async def test_create_task_smart_priority_preserved() -> None:
+    """Priority from intent is passed to repo.create."""
+    session = AsyncMock()
+    user = _make_user()
+    task_list = _make_list(1)
+    created_task = _make_task(1, "Срочная задача", priority=Priority.HIGH)
+
+    repo = AsyncMock()
+    repo.get_lists_by_user = AsyncMock(return_value=[task_list])
+    repo.create = AsyncMock(return_value=created_task)
+
+    service = TaskService(session, repo=repo)
+    await service.create_task_smart(
+        user=user,  # type: ignore[arg-type]
+        intent=CreateTaskIntent(type="create_task", title="Срочная задача", priority="high"),
+    )
+
+    create_kwargs = repo.create.call_args.kwargs
+    assert create_kwargs["priority"] == "high"

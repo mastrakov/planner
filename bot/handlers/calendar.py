@@ -38,7 +38,12 @@ async def cb_event_detail(callback: CallbackQuery, user: User, session: AsyncSes
 
     time_str = fmt_full(event.starts_at, user.timezone)
     end_str = f" — {fmt_time(event.ends_at, user.timezone)}" if event.ends_at else ""
-    reminder_str = f"\nНапоминание: за {event.reminder_minutes} мин." if event.reminder_minutes else ""
+    reminders = event.reminders
+    if reminders:
+        reminder_times = ", ".join(fmt_time(r.remind_at, user.timezone) for r in sorted(reminders, key=lambda r: r.remind_at))
+        reminder_str = f"\n🔔 Напоминания: {reminder_times}"
+    else:
+        reminder_str = ""
     text = f"<b>{event.title}</b>\n{time_str}{end_str}{reminder_str}"
 
     await callback.message.edit_text(  # type: ignore[union-attr]

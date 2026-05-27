@@ -3,6 +3,7 @@ from aiogram import Router
 from bot.handlers import (
     ai_chat,
     analytics,
+    briefing,
     calendar,
     confirm_intent,
     google_auth,
@@ -20,6 +21,7 @@ def get_main_router() -> Router:
     # Order matters: more specific handlers before catch-all
     router.include_router(start.router)
     router.include_router(tasks.router)
+    router.include_router(briefing.router)        # Task creation flow + briefing callbacks
     router.include_router(lists_fsm.router)       # FSM: create/rename lists
     router.include_router(confirm_intent.router)  # FSM: confirm low-confidence intents
     router.include_router(calendar.router)
