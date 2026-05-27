@@ -76,10 +76,12 @@ def task_detail_keyboard(task: Task, lists: list[TaskList]) -> InlineKeyboardMar
     if not task.is_completed:
         builder.button(text="✅ Выполнить", callback_data=f"task_complete:{task.id}")
     builder.button(text="🎯 Приоритет", callback_data=f"task_priority_start:{task.id}")
+    builder.button(text="🕐 Запланировать", callback_data=f"task_set_scheduled:{task.id}")
+    builder.button(text="📅 Дедлайн", callback_data=f"task_set_due:{task.id}")
     builder.button(text="🗂 Переместить", callback_data=f"task_move_start:{task.id}")
     builder.button(text="🗑 Удалить", callback_data=f"task_delete:{task.id}")
     builder.button(text="← Назад", callback_data="tasks_back")
-    builder.adjust(2, 2, 1)
+    builder.adjust(2, 2, 2, 1)
     return builder.as_markup()
 
 

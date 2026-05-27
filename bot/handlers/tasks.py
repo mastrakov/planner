@@ -1,11 +1,13 @@
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import User
+from bot.db.models import AIModel, User
 from bot.db.repo.tasks import TaskRepo
-from bot.utils.dt import fmt_full
+from bot.utils.dt import fmt_full, parse_user_date
 from bot.keyboards.tasks import (
     confirm_keyboard,
     list_detail_keyboard,
@@ -18,6 +20,27 @@ from bot.keyboards.tasks import (
 )
 
 router = Router()
+
+
+def _task_detail_text(task: object, tz: str) -> str:  # task is Task but avoid circular import hint
+    from bot.db.models import Task as _Task
+    t: _Task = task  # type: ignore[assignment]
+    prio = {"high": "🔴 Высокий", "medium": "🟡 Средний", "low": "🟢 Низкий"}.get(t.priority, "")
+    status = "Выполнена" if t.is_completed else "Активна"
+    scheduled_str = f"\n🕐 Запланировано: {fmt_full(t.scheduled_at, tz)}" if t.scheduled_at else ""
+    due_str = f"\n📅 Дедлайн: {fmt_full(t.due_date, tz)}" if t.due_date else ""
+    return (
+        f"<b>{t.title}</b>\n"
+        f"Приоритет: {prio}\n"
+        f"Статус: {status}"
+        f"{scheduled_str}"
+        f"{due_str}"
+    )
+
+
+class TaskDateStates(StatesGroup):
+    waiting_scheduled_at = State()
+    waiting_due_date = State()
 
 
 @router.message(Command("tasks"))
@@ -58,16 +81,11 @@ async def cb_task_detail(callback: CallbackQuery, user: User, session: AsyncSess
         return
 
     lists = await repo.get_lists_by_user(user.id)
-    prio = {"high": "🔴 Высокий", "medium": "🟡 Средний", "low": "🟢 Низкий"}.get(task.priority, "")
-    due_str = f"\nДедлайн: {fmt_full(task.due_date, user.timezone)}" if task.due_date else ""
-    status = "Выполнена" if task.is_completed else "Активна"
-    text = (
-        f"<b>{task.title}</b>\n"
-        f"Приоритет: {prio}\n"
-        f"Статус: {status}"
-        f"{due_str}"
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        _task_detail_text(task, user.timezone),
+        parse_mode="HTML",
+        reply_markup=task_detail_keyboard(task, lists),
     )
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=task_detail_keyboard(task, lists))  # type: ignore[union-attr]
     await callback.answer()
 
 
@@ -140,15 +158,131 @@ async def cb_task_priority_set(callback: CallbackQuery, user: User, session: Asy
     await callback.answer(f"Приоритет изменён: {prio_label}")
     # Refresh task detail view
     lists = await repo.get_lists_by_user(user.id)
-    due_str = f"\nДедлайн: {fmt_full(task.due_date, user.timezone)}" if task.due_date else ""
-    status = "Выполнена" if task.is_completed else "Активна"
-    text = (
-        f"<b>{task.title}</b>\n"
-        f"Приоритет: {prio_label}\n"
-        f"Статус: {status}"
-        f"{due_str}"
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        _task_detail_text(task, user.timezone),
+        parse_mode="HTML",
+        reply_markup=task_detail_keyboard(task, lists),
     )
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=task_detail_keyboard(task, lists))  # type: ignore[union-attr]
+
+
+@router.callback_query(F.data.startswith("task_set_scheduled:"))
+async def cb_task_set_scheduled_start(callback: CallbackQuery, user: User, session: AsyncSession, state: FSMContext) -> None:
+    task_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    repo = TaskRepo(session)
+    task = await repo.get_by_id(task_id)
+    if not task or task.user_id != user.id:
+        await callback.answer("Задача не найдена.")
+        return
+    await state.set_state(TaskDateStates.waiting_scheduled_at)
+    await state.update_data(task_id=task_id)
+    current = f" (сейчас: {fmt_full(task.scheduled_at, user.timezone)})" if task.scheduled_at else ""
+    await callback.message.answer(  # type: ignore[union-attr]
+        f"Задача: «{task.title}»{current}\n\n"
+        "Напишите когда планируете выполнить — дату и время:\n"
+        "<i>Примеры: «в субботу в 15:00», «завтра утром», «1 июня в 10:30», «убрать» — чтобы удалить</i>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("task_set_due:"))
+async def cb_task_set_due_start(callback: CallbackQuery, user: User, session: AsyncSession, state: FSMContext) -> None:
+    task_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    repo = TaskRepo(session)
+    task = await repo.get_by_id(task_id)
+    if not task or task.user_id != user.id:
+        await callback.answer("Задача не найдена.")
+        return
+    await state.set_state(TaskDateStates.waiting_due_date)
+    await state.update_data(task_id=task_id)
+    current = f" (сейчас: {fmt_full(task.due_date, user.timezone)})" if task.due_date else ""
+    await callback.message.answer(  # type: ignore[union-attr]
+        f"Задача: «{task.title}»{current}\n\n"
+        "Напишите крайний срок (дедлайн):\n"
+        "<i>Примеры: «до пятницы», «31 мая», «конец месяца», «убрать» — чтобы удалить</i>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(TaskDateStates.waiting_scheduled_at)
+async def msg_task_scheduled_at(message: Message, user: User, session: AsyncSession, state: FSMContext) -> None:
+    data = await state.get_data()
+    task_id: int = data["task_id"]
+    await state.clear()
+
+    repo = TaskRepo(session)
+    task = await repo.get_by_id(task_id)
+    if not task or task.user_id != user.id:
+        await message.answer("Задача не найдена.")
+        return
+
+    text = (message.text or "").strip().lower()
+
+    # Clear value
+    if text in ("убрать", "удалить", "нет", "clear", "remove", "-"):
+        await repo.update(task, scheduled_at=None)
+        await message.answer(f"✓ Время выполнения для «{task.title}» удалено.")
+        return
+
+    # Parse via AI
+    use_gpt4o = user.ai_model == AIModel.GPT4O
+    dt = await parse_user_date(
+        message.text or "",
+        tz_name=user.timezone,
+        use_gpt4o=use_gpt4o,
+    )
+    if dt is None:
+        await message.answer(
+            "Не удалось распознать дату. Попробуйте ещё раз, например:\n"
+            "«в субботу в 15:00», «завтра утром», «1 июня в 10:30»"
+        )
+        return
+
+    await repo.update(task, scheduled_at=dt)
+    await message.answer(
+        f"✓ Запланировано: «{task.title}» — 🕐 {fmt_full(dt, user.timezone)}"
+    )
+
+
+@router.message(TaskDateStates.waiting_due_date)
+async def msg_task_due_date(message: Message, user: User, session: AsyncSession, state: FSMContext) -> None:
+    data = await state.get_data()
+    task_id: int = data["task_id"]
+    await state.clear()
+
+    repo = TaskRepo(session)
+    task = await repo.get_by_id(task_id)
+    if not task or task.user_id != user.id:
+        await message.answer("Задача не найдена.")
+        return
+
+    text = (message.text or "").strip().lower()
+
+    # Clear value
+    if text in ("убрать", "удалить", "нет", "clear", "remove", "-"):
+        await repo.update(task, due_date=None)
+        await message.answer(f"✓ Дедлайн для «{task.title}» удалён.")
+        return
+
+    # Parse via AI
+    use_gpt4o = user.ai_model == AIModel.GPT4O
+    dt = await parse_user_date(
+        message.text or "",
+        tz_name=user.timezone,
+        use_gpt4o=use_gpt4o,
+    )
+    if dt is None:
+        await message.answer(
+            "Не удалось распознать дату. Попробуйте ещё раз, например:\n"
+            "«до пятницы», «31 мая», «конец месяца»"
+        )
+        return
+
+    await repo.update(task, due_date=dt)
+    await message.answer(
+        f"✓ Дедлайн установлен: «{task.title}» — 📅 {fmt_full(dt, user.timezone)}"
+    )
 
 
 @router.callback_query(F.data.startswith("task_move_start:"))
