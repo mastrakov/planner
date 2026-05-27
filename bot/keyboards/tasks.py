@@ -25,7 +25,7 @@ def tasks_by_priority_keyboard(tasks: list[Task], user_timezone: str) -> tuple[s
     Text: tasks grouped by priority (high → medium → low), each with due date.
     Keyboard: one button per task labelled by index number for quick access.
     """
-    from bot.utils.dt import fmt_date, fmt_time
+    from bot.utils.dt import fmt, fmt_date, fmt_full, fmt_time
 
     _PRIO_HEADERS = {
         "high": "🔴 Высокий приоритет",
@@ -50,9 +50,9 @@ def tasks_by_priority_keyboard(tasks: list[Task], user_timezone: str) -> tuple[s
             idx = len(numbered) + 1
             numbered.append(task)
             if task.scheduled_at:
-                date_str = f" 🕐{fmt_time(task.scheduled_at, user_timezone)}"
+                date_str = f" 📅{fmt(task.scheduled_at, user_timezone, '%d.%m %H:%M')}"
             elif task.due_date:
-                date_str = f" 📅{fmt_date(task.due_date, user_timezone)}"
+                date_str = f" 📅до {fmt_date(task.due_date, user_timezone)}"
             else:
                 date_str = ""
             cat = task.task_list.emoji if task.task_list else ""
