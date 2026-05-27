@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     # AI
     anthropic_api_key: str
     openai_api_key: str
+    claude_model: str = "claude-haiku-4-5-20251001"
+    openai_model: str = "gpt-4o"
 
     # Database
     postgres_dsn: str

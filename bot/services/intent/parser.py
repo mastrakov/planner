@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytz
 
+from bot.config import settings
 from bot.db.models import AIModel, ChatHistory, User
 from bot.db.repo.tasks import TaskRepo
 from bot.services.intent.models import ParsedResponse
@@ -38,7 +39,7 @@ async def _parse_with_claude(
     all_messages = messages + [{"role": "user", "content": text}]
     logger.debug("Claude request: history_len=%d text=%r", len(messages), text)
     response = await client.messages.create(
-        model="claude-haiku-4-5-20251001",
+        model=settings.claude_model,
         max_tokens=1024,
         system=system,
         messages=all_messages,  # type: ignore[arg-type]
@@ -57,7 +58,7 @@ async def _parse_with_gpt4o(
     all_messages = [{"role": "system", "content": system}] + messages + [{"role": "user", "content": text}]
     logger.debug("GPT-4o request: history_len=%d text=%r", len(messages), text)
     response = await client.chat.completions.create(
-        model="gpt-4o",
+        model=settings.openai_model,
         max_tokens=1024,
         messages=all_messages,  # type: ignore[arg-type]
         response_format={"type": "json_object"},

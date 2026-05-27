@@ -77,14 +77,14 @@ class AnalyticsService:
         try:
             if user.ai_model == AIModel.GPT4O:
                 resp = await self._get_openai_client().chat.completions.create(
-                    model="gpt-4o",
+                    model=settings.openai_model,
                     max_tokens=200,
                     messages=[{"role": "user", "content": prompt}],
                 )
                 return resp.choices[0].message.content or ""
             else:
                 resp = await self._get_anthropic_client().messages.create(
-                    model="claude-haiku-4-5-20251001",
+                    model=settings.claude_model,
                     max_tokens=200,
                     messages=[{"role": "user", "content": prompt}],
                 )

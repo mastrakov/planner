@@ -311,7 +311,7 @@ class IntentRouter:
         if user.ai_model == AIModel.GPT4O:
             messages = history_messages + [{"role": "user", "content": intent.message}]
             response = await self._get_openai_client().chat.completions.create(
-                model="gpt-4o",
+                model=settings.openai_model,
                 max_tokens=1024,
                 messages=messages,  # type: ignore[arg-type]
             )
@@ -319,7 +319,7 @@ class IntentRouter:
         else:
             messages = history_messages + [{"role": "user", "content": intent.message}]
             resp = await self._get_anthropic_client().messages.create(
-                model="claude-haiku-4-5-20251001",
+                model=settings.claude_model,
                 max_tokens=1024,
                 messages=messages,  # type: ignore[arg-type]
             )

@@ -92,7 +92,7 @@ async def parse_user_date(
             from openai import AsyncOpenAI  # type: ignore[import-untyped]
             client: AsyncOpenAI = openai_client  # type: ignore[assignment]
             response = await client.chat.completions.create(
-                model="gpt-4o",
+                model=settings.openai_model,
                 max_tokens=64,
                 messages=[
                     {"role": "system", "content": system},
@@ -108,7 +108,7 @@ async def parse_user_date(
                 anthropic_client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
             client_a: _anthropic.AsyncAnthropic = anthropic_client  # type: ignore[assignment]
             resp = await client_a.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model=settings.claude_model,
                 max_tokens=64,
                 system=system,
                 messages=[{"role": "user", "content": text}],
