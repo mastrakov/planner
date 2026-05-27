@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from bot.config import settings
 from bot.db.models import ChatHistory, User
 from bot.services.intent.models import (
     DESTRUCTIVE_INTENT_TYPES,
@@ -37,6 +38,8 @@ if TYPE_CHECKING:
     from bot.services.reminders import ReminderService
     from bot.services.tasks import TaskService
 
+from bot.services.ai.clients import AIClients
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,30 +53,16 @@ class IntentRouter:
         analytics_service: AnalyticsService,
         anthropic_client: anthropic.AsyncAnthropic | None = None,
         openai_client: AsyncOpenAI | None = None,
+        ai_clients: AIClients | None = None,
     ) -> None:
         self._tasks = task_service
         self._calendar = calendar_service
         self._reminders = reminder_service
         self._briefing = briefing_service
         self._analytics = analytics_service
-        self._anthropic_client = anthropic_client
-        self._openai_client = openai_client
-
-    def _get_anthropic_client(self) -> anthropic.AsyncAnthropic:
-        if self._anthropic_client is None:
-            import anthropic as _anthropic
-
-            from bot.config import settings
-            self._anthropic_client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-        return self._anthropic_client
-
-    def _get_openai_client(self) -> AsyncOpenAI:
-        if self._openai_client is None:
-            from openai import AsyncOpenAI
-
-            from bot.config import settings
-            self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-        return self._openai_client
+        if ai_clients is None:
+            ai_clients = AIClients(anthropic_client=anthropic_client, openai_client=openai_client)
+        self._ai_clients = ai_clients
 
     async def route(
         self,
@@ -310,7 +299,7 @@ class IntentRouter:
 
         if user.ai_model == AIModel.GPT4O:
             messages = history_messages + [{"role": "user", "content": intent.message}]
-            response = await self._get_openai_client().chat.completions.create(
+            response = await self._ai_clients.get_openai().chat.completions.create(
                 model=settings.openai_model,
                 max_tokens=1024,
                 messages=messages,  # type: ignore[arg-type]
@@ -318,7 +307,7 @@ class IntentRouter:
             text = response.choices[0].message.content or "Нет ответа."
         else:
             messages = history_messages + [{"role": "user", "content": intent.message}]
-            resp = await self._get_anthropic_client().messages.create(
+            resp = await self._ai_clients.get_anthropic().messages.create(
                 model=settings.claude_model,
                 max_tokens=1024,
                 messages=messages,  # type: ignore[arg-type]
