@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from bot.db.models import User
@@ -53,28 +54,47 @@ class IntentRouter:
         parsed: ParsedResponse,
         user: User,
         message: Message,
+        state: "FSMContext | None" = None,
     ) -> None:
         if parsed.clarification_needed:
             await message.answer(parsed.clarification_needed)
             return
 
-        if parsed.confidence < 0.8:
-            summary = self._summarize(parsed)
-            await message.answer(
-                f"Я понял вас так:\n{summary}\n\nВсё верно? Напишите «да» для подтверждения."
-            )
-            return
-
         has_destructive = any(
             intent.type in DESTRUCTIVE_INTENT_TYPES for intent in parsed.intents
         )
-        if has_destructive:
-            summary = self._summarize(parsed)
-            await message.answer(
-                f"Это действие нельзя отменить:\n{summary}\n\nПодтвердите, написав «да»."
-            )
+
+        if parsed.confidence < 0.8 or has_destructive:
+            if state is not None:
+                from bot.handlers.confirm_intent import ask_confirmation
+
+                summary = self._summarize(parsed)
+                await ask_confirmation(
+                    message,
+                    state,
+                    summary,
+                    parsed_json=parsed.model_dump_json(),
+                    is_destructive=has_destructive,
+                )
+            else:
+                # Fallback when no FSM context available
+                summary = self._summarize(parsed)
+                prefix = "Это действие нельзя отменить" if has_destructive else "Я понял вас так"
+                await message.answer(
+                    f"{prefix}:\n{summary}\n\nПодтвердите, написав «да»."
+                )
             return
 
+        for intent in parsed.intents:
+            await self._dispatch(intent, user, message)
+
+    async def execute_confirmed(
+        self,
+        parsed: ParsedResponse,
+        user: User,
+        message: Message,
+    ) -> None:
+        """Execute intents that were already confirmed by the user."""
         for intent in parsed.intents:
             await self._dispatch(intent, user, message)
 

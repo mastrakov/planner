@@ -2,6 +2,7 @@ import logging
 
 from aiogram import Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,12 +18,13 @@ router = Router()
 
 
 @router.message(Command("cancel"))
-async def cmd_cancel(message: Message) -> None:
+async def cmd_cancel(message: Message, state: FSMContext) -> None:
+    await state.clear()
     await message.answer("Действие отменено.")
 
 
 @router.message()
-async def handle_text(message: Message, user: User, session: AsyncSession) -> None:
+async def handle_text(message: Message, user: User, session: AsyncSession, state: FSMContext) -> None:
     if not message.text:
         return
 
@@ -53,7 +55,7 @@ async def handle_text(message: Message, user: User, session: AsyncSession) -> No
         briefing_service=BriefingService(session),
         analytics_service=AnalyticsService(session),
     )
-    await intent_router.route(parsed, user, message)
+    await intent_router.route(parsed, user, message, state=state)
 
     if parsed.intents:
         intent_type = parsed.intents[0].type

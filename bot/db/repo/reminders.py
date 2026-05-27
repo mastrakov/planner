@@ -1,9 +1,19 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Reminder, RepeatType
+
+
+def _add_month(dt: datetime) -> datetime:
+    """Advance datetime by exactly one calendar month."""
+    month = dt.month + 1
+    year = dt.year + (month - 1) // 12
+    month = (month - 1) % 12 + 1
+    import calendar
+    day = min(dt.day, calendar.monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
 
 
 class ReminderRepo:
@@ -32,7 +42,17 @@ class ReminderRepo:
         return list(result.scalars().all())
 
     async def mark_sent(self, reminder: Reminder) -> None:
-        reminder.is_sent = True
+        """Mark reminder as sent. If it repeats — schedule next occurrence instead."""
+        if reminder.repeat == RepeatType.NONE:
+            reminder.is_sent = True
+        elif reminder.repeat == RepeatType.DAILY:
+            reminder.remind_at = reminder.remind_at + timedelta(days=1)
+        elif reminder.repeat == RepeatType.WEEKLY:
+            reminder.remind_at = reminder.remind_at + timedelta(weeks=1)
+        elif reminder.repeat == RepeatType.MONTHLY:
+            reminder.remind_at = _add_month(reminder.remind_at)
+        else:
+            reminder.is_sent = True
         await self._session.flush()
 
     async def get_by_user(self, user_id: int) -> list[Reminder]:
