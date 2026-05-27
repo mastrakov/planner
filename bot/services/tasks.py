@@ -172,6 +172,8 @@ class TaskService:
             kwargs["priority"] = intent.new_priority
         if intent.new_due_date:
             kwargs["due_date"] = intent.new_due_date
+        if intent.new_scheduled_at:
+            kwargs["scheduled_at"] = intent.new_scheduled_at
 
         if intent.new_list_name:
             lists = await self._repo.get_lists_by_user(user.id)
