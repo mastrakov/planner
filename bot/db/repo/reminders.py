@@ -96,16 +96,20 @@ class ReminderRepo:
         await self._session.delete(reminder)
         await self._session.flush()
 
-    async def get_today(self, user_id: int, tz_name: str = "UTC") -> list[Reminder]:
-        """Return unsent reminders whose remind_at falls within today in the user's timezone."""
+    async def get_for_date(
+        self,
+        user_id: int,
+        local_date: "datetime",
+        tz_name: str = "UTC",
+    ) -> list["Reminder"]:
+        """Return unsent reminders whose remind_at falls within the given local date."""
         import pytz
         tz = pytz.timezone(tz_name)
         from datetime import datetime as _dt
-        now_local = _dt.now(tz)
-        day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(days=1)
-        utc_start = day_start.astimezone(pytz.utc).replace(tzinfo=None)
-        utc_end = day_end.astimezone(pytz.utc).replace(tzinfo=None)
+        naive = local_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+        aware = tz.localize(naive)
+        utc_start = aware.astimezone(pytz.utc).replace(tzinfo=None)
+        utc_end = (aware + timedelta(days=1)).astimezone(pytz.utc).replace(tzinfo=None)
         result = await self._session.execute(
             select(Reminder)
             .where(Reminder.user_id == user_id)
@@ -115,6 +119,13 @@ class ReminderRepo:
             .order_by(Reminder.remind_at)
         )
         return list(result.scalars().all())
+
+    async def get_today(self, user_id: int, tz_name: str = "UTC") -> list["Reminder"]:
+        """Return unsent reminders for today. Convenience wrapper around get_for_date."""
+        from datetime import datetime as _dt
+        import pytz
+        now_local = _dt.now(pytz.timezone(tz_name))
+        return await self.get_for_date(user_id, now_local, tz_name)
 
     async def has_reminder_for_event(self, event_id: int) -> bool:
         """Return True if there is at least one unsent reminder linked to the event."""

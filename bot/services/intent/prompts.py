@@ -82,8 +82,13 @@ def build_system_prompt(
 11. update_reminder — изменить напоминание
     {{"type": "update_reminder", "reminder_title": "...", "new_remind_at": "ISO datetime или null", "new_title": "... или null"}}
 
-12. get_briefing — показать утренний брифинг
-    {{"type": "get_briefing"}}
+12. get_briefing — показать брифинг
+    {{"type": "get_briefing", "scope": "day|week", "target_date": "ISO datetime или null"}}
+    - scope="day", target_date=null → брифинг на сегодня
+    - scope="day", target_date="2026-05-28T00:00:00+03:00" → брифинг на конкретный день
+    - scope="week", target_date=null → брифинг на текущую неделю
+    - scope="week", target_date="2026-06-02T00:00:00+03:00" → неделя начиная с этой даты
+    Примеры: "брифинг на завтра" → scope=day, target_date=завтра; "план на неделю" → scope=week
 
 13. get_analytics — показать аналитику
     {{"type": "get_analytics", "period": "week|month"}}

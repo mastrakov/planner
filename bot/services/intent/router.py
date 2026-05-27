@@ -189,7 +189,7 @@ class IntentRouter:
                 await message.answer(result)
 
             elif isinstance(intent, GetBriefingIntent):
-                briefing = await self._briefing.build_morning(user=user)
+                briefing = await self._dispatch_briefing(intent, user)
                 await message.answer(briefing.text, parse_mode="HTML", reply_markup=briefing.combined_keyboard)
 
             elif isinstance(intent, GetAnalyticsIntent):
@@ -202,6 +202,39 @@ class IntentRouter:
         except Exception:
             logger.exception("Error dispatching intent %s for user %d", intent.type, user.id)
             await message.answer("Произошла ошибка при выполнении команды. Попробуйте ещё раз.")
+
+    async def _dispatch_briefing(
+        self,
+        intent: GetBriefingIntent,
+        user: User,
+    ):
+        """Route get_briefing to the right BriefingService method."""
+        import pytz
+        from datetime import datetime as _dt
+
+        tz = pytz.timezone(user.timezone)
+        now_local = _dt.now(tz).replace(tzinfo=None)
+
+        if intent.scope == "week":
+            if intent.target_date:
+                # target_date is UTC naive — convert to local
+                local_dt = pytz.utc.localize(intent.target_date).astimezone(tz).replace(tzinfo=None)
+            else:
+                local_dt = now_local
+            # Find Monday of the target week
+            monday = local_dt - __import__("datetime").timedelta(days=local_dt.weekday())
+            return await self._briefing.build_for_week(user=user, week_start_local=monday)
+        else:
+            if intent.target_date:
+                local_dt = pytz.utc.localize(intent.target_date).astimezone(tz).replace(tzinfo=None)
+            else:
+                local_dt = now_local
+            # For today specifically use build_morning (has overdue section)
+            today_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+            target_day = local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            if target_day == today_local:
+                return await self._briefing.build_morning(user=user)
+            return await self._briefing.build_for_date(user=user, target_local=target_day)
 
     async def _dispatch_create_task(
         self,

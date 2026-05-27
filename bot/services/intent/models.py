@@ -141,6 +141,14 @@ class UpdateReminderIntent(BaseModel):
 
 class GetBriefingIntent(BaseModel):
     type: Literal["get_briefing"]
+    # None = today, "week" = current week, or a specific date
+    target_date: datetime | None = None
+    scope: Literal["day", "week"] = "day"
+
+    @field_validator("target_date", mode="after")
+    @classmethod
+    def normalize_target_date(cls, v: datetime | None) -> datetime | None:
+        return _to_utc_naive(v)
 
 
 class GetAnalyticsIntent(BaseModel):

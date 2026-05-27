@@ -264,6 +264,144 @@ class BriefingService:
         return BriefingResult(text=text, combined_keyboard=combined_kb)
 
     # ------------------------------------------------------------------
+    # Briefing for a specific date (today, tomorrow, any future date)
+    # ------------------------------------------------------------------
+
+    async def build_for_date(self, user: User, target_local: datetime) -> BriefingResult:
+        """Briefing for any specific day.
+
+        Sections:
+        1. Header with weekday + date
+        2. ⏳ Carrying over (tasks with due_date < target_day, not completed)
+        3. 📅 Events on that day
+        4. ✅ Tasks with due_date on that day, grouped by priority
+        5. 🔔 Reminders scheduled for that day
+        """
+        import pytz as _pytz
+
+        day_start_utc, day_end_utc = _day_utc_bounds(target_local, user.timezone)
+
+        carrying_over = await self._task_repo.get_carrying_over(user.id, before_utc=day_start_utc)
+        day_tasks = await self._task_repo.get_for_date(user.id, day_start_utc, day_end_utc)
+        day_events = await self._calendar_repo.get_for_date_range(user.id, day_start_utc, day_end_utc)
+        day_reminders = await self._reminder_repo.get_for_date(user.id, target_local, user.timezone)
+
+        lines: list[str] = []
+
+        weekday_ru = _WEEKDAYS_RU[target_local.weekday()]
+        tz = _pytz.timezone(user.timezone)
+        date_str = target_local.strftime("%d.%m.%Y")
+        lines.append(f"<b>📅 Брифинг на {weekday_ru.lower()}, {date_str}</b>")
+
+        # 1. Carrying over
+        if carrying_over:
+            lines.append(f"\n<b>⏳ Переходит с прошлых дней ({len(carrying_over)}):</b>")
+            for t in carrying_over:
+                prio_icon = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(t.priority, "")
+                cat = t.task_list.emoji if t.task_list else ""
+                due = fmt_date(t.due_date, user.timezone) if t.due_date else "без даты"
+                lines.append(f"  {prio_icon} {cat} {t.title}  <i>до {due}</i>")
+
+        # 2. Events
+        if day_events:
+            lines.append("\n<b>📅 События:</b>")
+            for ev in sorted(day_events, key=lambda e: e.starts_at):
+                lines.append(f"  {fmt_time(ev.starts_at, user.timezone)} — {ev.title}")
+
+        # 3. Tasks for that day grouped by priority
+        if day_tasks:
+            lines.append("\n<b>✅ Запланировано:</b>")
+            _PRIO_HEADERS = {"high": "🔴 Высокий", "medium": "🟡 Средний", "low": "🟢 Низкий"}
+            grouped: dict[str, list] = {"high": [], "medium": [], "low": []}
+            for t in day_tasks:
+                grouped.setdefault(t.priority, []).append(t)
+            for prio in ("high", "medium", "low"):
+                for t in grouped.get(prio, []):
+                    cat = t.task_list.emoji if t.task_list else ""
+                    lines.append(f"  {_PRIO_HEADERS[prio][:2]} {cat} {t.title}")
+
+        # 4. Reminders
+        if day_reminders:
+            lines.append("\n<b>🔔 Напоминания:</b>")
+            for r in day_reminders:
+                lines.append(f"  {fmt_time(r.remind_at, user.timezone)} — {r.title}")
+
+        return BriefingResult(text="\n".join(lines), combined_keyboard=None)
+
+    async def build_for_week(self, user: User, week_start_local: datetime) -> BriefingResult:
+        """Weekly briefing: carrying over + events and tasks grouped by day.
+
+        week_start_local — Monday of the target week (naive local datetime).
+        """
+        lines: list[str] = []
+
+        week_end_local = week_start_local + timedelta(days=7)
+        ws_start_utc, _ = _day_utc_bounds(week_start_local, user.timezone)
+        _, we_end_utc = _day_utc_bounds(week_end_local - timedelta(days=1), user.timezone)
+
+        carrying_over = await self._task_repo.get_carrying_over(user.id, before_utc=ws_start_utc)
+        week_events = await self._calendar_repo.get_for_date_range(user.id, ws_start_utc, we_end_utc)
+        week_tasks = await self._task_repo.get_week_range(user.id, tz_name=user.timezone)
+        # Collect reminders per day for the whole week
+        week_reminders_by_day: dict[int, list] = {}
+        for i in range(7):
+            day_local = week_start_local + timedelta(days=i)
+            rems = await self._reminder_repo.get_for_date(user.id, day_local, user.timezone)
+            if rems:
+                week_reminders_by_day[i] = rems
+
+        ws_str = week_start_local.strftime("%d.%m")
+        we_str = (week_end_local - timedelta(days=1)).strftime("%d.%m")
+        lines.append(f"<b>📆 Брифинг на неделю {ws_str}–{we_str}</b>")
+
+        # Carrying over
+        if carrying_over:
+            lines.append(f"\n<b>⏳ Переходит с прошлых дней ({len(carrying_over)}):</b>")
+            for t in carrying_over:
+                prio_icon = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(t.priority, "")
+                cat = t.task_list.emoji if t.task_list else ""
+                due = fmt_date(t.due_date, user.timezone) if t.due_date else "без даты"
+                lines.append(f"  {prio_icon} {cat} {t.title}  <i>до {due}</i>")
+
+        # Events + tasks grouped by day
+        for i in range(7):
+            day_local = week_start_local + timedelta(days=i)
+            day_start_utc, day_end_utc = _day_utc_bounds(day_local, user.timezone)
+            day_events = [e for e in week_events if day_start_utc <= e.starts_at < day_end_utc]
+            day_tasks = [t for t in week_tasks if t.due_date and day_start_utc <= t.due_date < day_end_utc]
+            day_rems = week_reminders_by_day.get(i, [])
+
+            if not day_events and not day_tasks and not day_rems:
+                continue
+
+            wd = _WEEKDAYS_RU[day_local.weekday()]
+            date_str = day_local.strftime("%d.%m")
+            we_mark = " 🏖" if day_local.weekday() >= 5 else ""
+            lines.append(f"\n<b>{wd}, {date_str}{we_mark}</b>")
+
+            for ev in sorted(day_events, key=lambda e: e.starts_at):
+                lines.append(f"  📅 {fmt_time(ev.starts_at, user.timezone)} — {ev.title}")
+
+            _PRIO_HEADERS = {"high": "🔴", "medium": "🟡", "low": "🟢"}
+            for t in day_tasks:
+                prio_icon = _PRIO_HEADERS.get(t.priority, "")
+                cat = t.task_list.emoji if t.task_list else ""
+                lines.append(f"  ✅ {prio_icon} {cat} {t.title}")
+
+            for r in day_rems:
+                lines.append(f"  🔔 {fmt_time(r.remind_at, user.timezone)} — {r.title}")
+
+        # High-priority no-deadline tasks
+        no_dl = await self._task_repo.get_high_priority_no_deadline(user.id, limit=5)
+        if no_dl:
+            lines.append("\n<b>🔥 Важные задачи без дедлайна:</b>")
+            for t in no_dl:
+                cat = t.task_list.emoji if t.task_list else ""
+                lines.append(f"  🔴 {cat} {t.title}")
+
+        return BriefingResult(text="\n".join(lines), combined_keyboard=None)
+
+    # ------------------------------------------------------------------
     # Legacy wrappers (keep for backward compat with existing callers)
     # ------------------------------------------------------------------
 
@@ -311,6 +449,16 @@ class BriefingService:
 
 _WEEKDAYS_RU = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 _WEEKDAYS_SHORT_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+
+def _day_utc_bounds(local_date: datetime, tz_name: str) -> tuple[datetime, datetime]:
+    """Return (day_start_utc, day_end_utc) for a naive local date in user's timezone."""
+    import pytz as _pytz
+    tz = _pytz.timezone(tz_name)
+    naive = local_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    aware = tz.localize(naive)
+    end = aware + timedelta(days=1)
+    return aware.astimezone(_pytz.utc).replace(tzinfo=None), end.astimezone(_pytz.utc).replace(tzinfo=None)
 
 
 def _weekday_ru(dt: object) -> str:

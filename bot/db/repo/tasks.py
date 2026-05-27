@@ -89,6 +89,40 @@ class TaskRepo:
         tasks.sort(key=lambda t: priority_order.get(t.priority, 1))
         return tasks
 
+    async def get_carrying_over(self, user_id: int, before_utc: datetime) -> list[Task]:
+        """Return active tasks with due_date < before_utc (not completed).
+
+        Used for briefing on future dates: tasks that aren't closed yet and
+        whose deadline falls before the target day.
+        """
+        stmt = (
+            select(Task)
+            .where(Task.user_id == user_id)
+            .where(Task.completed_at.is_(None))
+            .where(Task.due_date < before_utc)
+            .options(selectinload(Task.task_list))
+            .order_by(Task.due_date)
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_for_date(self, user_id: int, day_start_utc: datetime, day_end_utc: datetime) -> list[Task]:
+        """Return active tasks with due_date within [day_start, day_end) UTC."""
+        stmt = (
+            select(Task)
+            .where(Task.user_id == user_id)
+            .where(Task.completed_at.is_(None))
+            .where(Task.due_date >= day_start_utc)
+            .where(Task.due_date < day_end_utc)
+            .options(selectinload(Task.task_list))
+            .order_by(Task.due_date)
+        )
+        result = await self._session.execute(stmt)
+        tasks = list(result.scalars().all())
+        priority_order = {Priority.HIGH: 0, Priority.MEDIUM: 1, Priority.LOW: 2}
+        tasks.sort(key=lambda t: priority_order.get(t.priority, 1))
+        return tasks
+
     async def get_high_priority_no_deadline(self, user_id: int, limit: int = 5) -> list[Task]:
         """Return up to `limit` active high-priority tasks with no due_date."""
         stmt = (
