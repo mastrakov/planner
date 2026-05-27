@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     import anthropic
     from openai import AsyncOpenAI
 
+from bot.services.ai.clients import AIClients
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,26 +76,12 @@ class IntentParser:
         task_repo: TaskRepo,
         anthropic_client: anthropic.AsyncAnthropic | None = None,
         openai_client: AsyncOpenAI | None = None,
+        ai_clients: AIClients | None = None,
     ) -> None:
         self._task_repo = task_repo
-        self._anthropic_client = anthropic_client
-        self._openai_client = openai_client
-
-    def _get_anthropic_client(self) -> anthropic.AsyncAnthropic:
-        if self._anthropic_client is None:
-            import anthropic as _anthropic
-
-            from bot.config import settings
-            self._anthropic_client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-        return self._anthropic_client
-
-    def _get_openai_client(self) -> AsyncOpenAI:
-        if self._openai_client is None:
-            from openai import AsyncOpenAI
-
-            from bot.config import settings
-            self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-        return self._openai_client
+        if ai_clients is None:
+            ai_clients = AIClients(anthropic_client=anthropic_client, openai_client=openai_client)
+        self._ai_clients = ai_clients
 
     async def parse(
         self,
@@ -117,9 +105,9 @@ class IntentParser:
         )
         try:
             if user.ai_model == AIModel.GPT4O:
-                raw = await _parse_with_gpt4o(self._get_openai_client(), system, history_messages, text)
+                raw = await _parse_with_gpt4o(self._ai_clients.get_openai(), system, history_messages, text)
             else:
-                raw = await _parse_with_claude(self._get_anthropic_client(), system, history_messages, text)
+                raw = await _parse_with_claude(self._ai_clients.get_anthropic(), system, history_messages, text)
 
             data = json.loads(raw)
             # Set user timezone context so Pydantic validators can correctly interpret

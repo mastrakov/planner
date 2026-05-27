@@ -8,6 +8,7 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.config import settings
 from bot.db.models import AIModel, User
 from bot.db.repo.calendar import CalendarRepo
 from bot.db.repo.reminders import ReminderRepo
@@ -17,6 +18,8 @@ from bot.utils.dt import fmt_date, fmt_time, now_utc
 if TYPE_CHECKING:
     import anthropic
     from openai import AsyncOpenAI
+
+from bot.services.ai.clients import AIClients
 
 
 @dataclass
@@ -41,29 +44,15 @@ class BriefingService:
         session: AsyncSession,
         anthropic_client: anthropic.AsyncAnthropic | None = None,
         openai_client: AsyncOpenAI | None = None,
+        ai_clients: AIClients | None = None,
     ) -> None:
         self._session = session
         self._task_repo = TaskRepo(session)
         self._calendar_repo = CalendarRepo(session)
         self._reminder_repo = ReminderRepo(session)
-        self._anthropic_client = anthropic_client
-        self._openai_client = openai_client
-
-    def _get_anthropic_client(self) -> anthropic.AsyncAnthropic:
-        if self._anthropic_client is None:
-            import anthropic as _anthropic
-
-            from bot.config import settings
-            self._anthropic_client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-        return self._anthropic_client
-
-    def _get_openai_client(self) -> AsyncOpenAI:
-        if self._openai_client is None:
-            from openai import AsyncOpenAI
-
-            from bot.config import settings
-            self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-        return self._openai_client
+        if ai_clients is None:
+            ai_clients = AIClients(anthropic_client=anthropic_client, openai_client=openai_client)
+        self._ai_clients = ai_clients
 
     # ------------------------------------------------------------------
     # Morning briefing
@@ -437,14 +426,14 @@ class BriefingService:
         )
         try:
             if user.ai_model == AIModel.GPT4O:
-                resp = await self._get_openai_client().chat.completions.create(
+                resp = await self._ai_clients.get_openai().chat.completions.create(
                     model=settings.openai_model,
                     max_tokens=200,
                     messages=[{"role": "user", "content": prompt}],
                 )
                 return resp.choices[0].message.content or ""
             else:
-                resp = await self._get_anthropic_client().messages.create(
+                resp = await self._ai_clients.get_anthropic().messages.create(
                     model=settings.claude_model,
                     max_tokens=200,
                     messages=[{"role": "user", "content": prompt}],
