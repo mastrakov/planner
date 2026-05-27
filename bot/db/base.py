@@ -14,8 +14,19 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-async def create_all() -> None:
-    from bot.db.models import Base  # noqa: F401 — ensure models are registered
+def run_migrations() -> None:
+    """Apply all pending Alembic migrations. Called once at startup before the bot runs."""
+    import logging
+    from alembic import command
+    from alembic.config import Config
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    logger = logging.getLogger(__name__)
+    logger.info("Running Alembic migrations...")
+
+    # alembic.ini lives at the project root (one level above bot/)
+    import os
+    ini_path = os.path.join(os.path.dirname(__file__), "..", "..", "alembic.ini")
+    alembic_cfg = Config(os.path.abspath(ini_path))
+    command.upgrade(alembic_cfg, "head")
+
+    logger.info("Migrations complete.")

@@ -69,8 +69,6 @@ async def fsm_create_list_name(message: Message, state: FSMContext, user: User, 
 
     repo = TaskRepo(session)
     await repo.create_list(user_id=user.id, name=name, emoji=emoji)
-    await session.commit()
-
     await state.clear()
 
     lists = await repo.get_lists_by_user(user.id)
@@ -139,7 +137,6 @@ async def fsm_rename_list_name(message: Message, state: FSMContext, user: User, 
 
     lst.name = new_name
     lst.emoji = new_emoji
-    await session.commit()
     await state.clear()
 
     await message.answer(

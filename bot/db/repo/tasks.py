@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.db.models import Task, TaskEvent, TaskEventType, TaskList
+from bot.utils.dt import now_utc
 
 
 class TaskRepo:
@@ -43,12 +44,11 @@ class TaskRepo:
         return list(result.scalars().all())
 
     async def get_overdue(self, user_id: int) -> list[Task]:
-        now = datetime.utcnow()
         stmt = (
             select(Task)
             .where(Task.user_id == user_id)
             .where(Task.completed_at.is_(None))
-            .where(Task.due_date < now)
+            .where(Task.due_date < now_utc())
             .options(selectinload(Task.task_list))
             .order_by(Task.due_date)
         )
@@ -56,7 +56,7 @@ class TaskRepo:
         return list(result.scalars().all())
 
     async def complete(self, task: Task) -> Task:
-        task.completed_at = datetime.utcnow()
+        task.completed_at = now_utc()
         event = TaskEvent(task_id=task.id, user_id=task.user_id, event_type=TaskEventType.COMPLETED)
         self._session.add(event)
         await self._session.flush()

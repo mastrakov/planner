@@ -6,21 +6,24 @@ from typing import TYPE_CHECKING
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from bot.db.models import User
+from bot.db.models import ChatHistory, User
 from bot.services.intent.models import (
     AIChatIntent,
     CompleteTaskIntent,
     CreateEventIntent,
     CreateReminderIntent,
     CreateTaskIntent,
+    DeleteReminderIntent,
     DeleteTaskIntent,
     DESTRUCTIVE_INTENT_TYPES,
     GetAnalyticsIntent,
     GetBriefingIntent,
     ListEventsIntent,
+    ListRemindersIntent,
     ListTasksIntent,
     ParsedIntent,
     ParsedResponse,
+    UpdateReminderIntent,
     UpdateTaskIntent,
 )
 
@@ -55,8 +58,15 @@ class IntentRouter:
         user: User,
         message: Message,
         state: "FSMContext | None" = None,
+        history: "list[ChatHistory] | None" = None,
     ) -> None:
+        logger.debug(
+            "Routing: user_id=%d intents=%s confidence=%.2f",
+            user.id, [i.type for i in parsed.intents], parsed.confidence,
+        )
+
         if parsed.clarification_needed:
+            logger.debug("Routing: clarification needed → %r", parsed.clarification_needed)
             await message.answer(parsed.clarification_needed)
             return
 
@@ -65,6 +75,10 @@ class IntentRouter:
         )
 
         if parsed.confidence < 0.8 or has_destructive:
+            logger.debug(
+                "Routing: low confidence (%.2f) or destructive=%s → asking confirmation",
+                parsed.confidence, has_destructive,
+            )
             if state is not None:
                 from bot.handlers.confirm_intent import ask_confirmation
 
@@ -86,19 +100,27 @@ class IntentRouter:
             return
 
         for intent in parsed.intents:
-            await self._dispatch(intent, user, message)
+            await self._dispatch(intent, user, message, history=history)
 
     async def execute_confirmed(
         self,
         parsed: ParsedResponse,
         user: User,
         message: Message,
+        history: "list[ChatHistory] | None" = None,
     ) -> None:
         """Execute intents that were already confirmed by the user."""
         for intent in parsed.intents:
-            await self._dispatch(intent, user, message)
+            await self._dispatch(intent, user, message, history=history)
 
-    async def _dispatch(self, intent: ParsedIntent, user: User, message: Message) -> None:
+    async def _dispatch(
+        self,
+        intent: ParsedIntent,
+        user: User,
+        message: Message,
+        history: "list[ChatHistory] | None" = None,
+    ) -> None:
+        logger.debug("Dispatching intent=%s for user_id=%d", intent.type, user.id)
         try:
             if isinstance(intent, CreateTaskIntent):
                 result = await self._tasks.create_task(user=user, intent=intent)
@@ -132,42 +154,68 @@ class IntentRouter:
                 result = await self._reminders.create(user=user, intent=intent)
                 await message.answer(result)
 
+            elif isinstance(intent, ListRemindersIntent):
+                result = await self._reminders.list_reminders(user=user, intent=intent)
+                await message.answer(result, parse_mode="HTML")
+
+            elif isinstance(intent, DeleteReminderIntent):
+                result = await self._reminders.delete_reminder(user=user, intent=intent)
+                await message.answer(result)
+
+            elif isinstance(intent, UpdateReminderIntent):
+                result = await self._reminders.update_reminder(user=user, intent=intent)
+                await message.answer(result)
+
             elif isinstance(intent, GetBriefingIntent):
                 result = await self._briefing.build_morning_briefing(user=user)
                 await message.answer(result, parse_mode="HTML")
 
             elif isinstance(intent, GetAnalyticsIntent):
-                result = await self._analytics.get_weekly_stats(user=user)
+                result = await self._analytics.get_stats(user=user, period=intent.period)
                 await message.answer(result, parse_mode="HTML")
 
             elif isinstance(intent, AIChatIntent):
-                await self._handle_ai_chat(intent, user, message)
+                await self._handle_ai_chat(intent, user, message, history=history)
 
         except Exception:
             logger.exception("Error dispatching intent %s for user %d", intent.type, user.id)
             await message.answer("Произошла ошибка при выполнении команды. Попробуйте ещё раз.")
 
-    async def _handle_ai_chat(self, intent: AIChatIntent, user: User, message: Message) -> None:
+    async def _handle_ai_chat(
+        self,
+        intent: AIChatIntent,
+        user: User,
+        message: Message,
+        history: "list[ChatHistory] | None" = None,
+    ) -> None:
         import anthropic as _anthropic
         from openai import AsyncOpenAI
 
         from bot.config import settings
         from bot.db.models import AIModel
 
+        # Build conversation history for context (exclude current message — it's in intent.message)
+        history_messages: list[dict[str, str]] = []
+        if history:
+            for h in history[:-1]:  # skip last entry — that's the current user message
+                history_messages.append({"role": h.role, "content": h.content})
+
         if user.ai_model == AIModel.GPT4O:
             client = AsyncOpenAI(api_key=settings.openai_api_key)
+            messages = history_messages + [{"role": "user", "content": intent.message}]
             response = await client.chat.completions.create(
                 model="gpt-4o",
                 max_tokens=1024,
-                messages=[{"role": "user", "content": intent.message}],
+                messages=messages,  # type: ignore[arg-type]
             )
             text = response.choices[0].message.content or "Нет ответа."
         else:
             client_a = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+            messages = history_messages + [{"role": "user", "content": intent.message}]
             resp = await client_a.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=1024,
-                messages=[{"role": "user", "content": intent.message}],
+                messages=messages,  # type: ignore[arg-type]
             )
             text = resp.content[0].text  # type: ignore[union-attr]
 
@@ -190,6 +238,12 @@ class IntentRouter:
                 lines.append("• Показать задачи")
             elif isinstance(intent, ListEventsIntent):
                 lines.append("• Показать события")
+            elif isinstance(intent, ListRemindersIntent):
+                lines.append("• Показать напоминания")
+            elif isinstance(intent, DeleteReminderIntent):
+                lines.append(f"• Удалить напоминание: «{intent.reminder_title}»")
+            elif isinstance(intent, UpdateReminderIntent):
+                lines.append(f"• Изменить напоминание: «{intent.reminder_title}»")
             elif isinstance(intent, GetBriefingIntent):
                 lines.append("• Показать брифинг")
             elif isinstance(intent, GetAnalyticsIntent):

@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+from bot.utils.dt import now_utc
+
 import anthropic
 from openai import AsyncOpenAI
 from sqlalchemy import func, select
@@ -18,8 +20,14 @@ class AnalyticsService:
         self._session = session
         self._task_repo = TaskRepo(session)
 
+    async def get_stats(self, user: User, period: str = "week") -> str:
+        """Return stats for the given period ('week' or 'month')."""
+        if period == "month":
+            return await self.get_monthly_stats(user)
+        return await self.get_weekly_stats(user)
+
     async def get_weekly_stats(self, user: User) -> str:
-        now = datetime.utcnow()
+        now = now_utc()
         week_ago = now - timedelta(days=7)
 
         # Tasks completed this week
@@ -98,6 +106,85 @@ class AnalyticsService:
             lines.extend(bar_lines)
 
         ai_comment = await self._get_ai_insights(created_count, completed_count, daily, user)
+        if ai_comment:
+            lines.append(f"\n💡 {ai_comment}")
+
+        return "\n".join(lines)
+
+    async def get_monthly_stats(self, user: User) -> str:
+        now = now_utc()
+        month_ago = now - timedelta(days=30)
+
+        completed_result = await self._session.execute(
+            select(func.count(TaskEvent.id))
+            .where(TaskEvent.user_id == user.id)
+            .where(TaskEvent.event_type == TaskEventType.COMPLETED)
+            .where(TaskEvent.occurred_at >= month_ago)
+        )
+        completed_count = completed_result.scalar_one()
+
+        created_result = await self._session.execute(
+            select(func.count(TaskEvent.id))
+            .where(TaskEvent.user_id == user.id)
+            .where(TaskEvent.event_type == TaskEventType.CREATED)
+            .where(TaskEvent.occurred_at >= month_ago)
+        )
+        created_count = created_result.scalar_one()
+
+        # Weekly breakdown (4 weeks)
+        weekly: dict[str, int] = {}
+        for i in range(4):
+            week_start = now - timedelta(days=(3 - i) * 7 + 7)
+            week_end = week_start + timedelta(days=7)
+            result = await self._session.execute(
+                select(func.count(TaskEvent.id))
+                .where(TaskEvent.user_id == user.id)
+                .where(TaskEvent.event_type == TaskEventType.COMPLETED)
+                .where(TaskEvent.occurred_at >= week_start)
+                .where(TaskEvent.occurred_at < week_end)
+            )
+            label = f"Неделя {i + 1} ({week_start.strftime('%d.%m')}–{week_end.strftime('%d.%m')})"
+            weekly[label] = result.scalar_one()
+
+        lists = await self._task_repo.get_lists_by_user(user.id)
+        list_stats: list[str] = []
+        for lst in lists:
+            total_result = await self._session.execute(
+                select(func.count(Task.id))
+                .where(Task.user_id == user.id)
+                .where(Task.list_id == lst.id)
+            )
+            total = total_result.scalar_one()
+            done_result = await self._session.execute(
+                select(func.count(Task.id))
+                .where(Task.user_id == user.id)
+                .where(Task.list_id == lst.id)
+                .where(Task.completed_at.isnot(None))
+            )
+            done = done_result.scalar_one()
+            pct = round(done / total * 100) if total > 0 else 0
+            list_stats.append(f"  {lst.emoji} {lst.name}: {done}/{total} ({pct}%)")
+
+        max_val = max(weekly.values()) if weekly else 1
+        bar_lines: list[str] = []
+        for label, cnt in weekly.items():
+            bar_len = round(cnt / max_val * 10) if max_val > 0 else 0
+            bar = "█" * bar_len + "░" * (10 - bar_len)
+            bar_lines.append(f"  {label}: {bar} {cnt}")
+
+        lines: list[str] = [
+            "<b>Статистика за месяц</b>",
+            f"\nСоздано задач: {created_count}",
+            f"Выполнено: {completed_count}",
+        ]
+        if list_stats:
+            lines.append("\n<b>По спискам:</b>")
+            lines.extend(list_stats)
+        if bar_lines:
+            lines.append("\n<b>Динамика по неделям:</b>")
+            lines.extend(bar_lines)
+
+        ai_comment = await self._get_ai_insights(created_count, completed_count, weekly, user)
         if ai_comment:
             lines.append(f"\n💡 {ai_comment}")
 

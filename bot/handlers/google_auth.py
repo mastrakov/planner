@@ -34,7 +34,6 @@ async def cmd_disconnect_google(message: Message, user: User, session: AsyncSess
         await message.answer("Google Calendar не подключён.")
         return
     await repo.delete(integration)
-    await session.commit()
     await message.answer("Google Calendar отключён.")
 
 

@@ -130,6 +130,8 @@ class Reminder(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
+    # Optional link to a calendar event — None means standalone reminder
+    event_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("calendar_events.id", ondelete="CASCADE"), nullable=True)
     title: Mapped[str] = mapped_column(String(512))
     remind_at: Mapped[datetime] = mapped_column(DateTime)
     repeat: Mapped[str] = mapped_column(Enum(RepeatType), default=RepeatType.NONE)
@@ -137,6 +139,7 @@ class Reminder(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="reminders")
+    event: Mapped["CalendarEvent | None"] = relationship(back_populates="reminders")
 
 
 class CalendarEvent(Base):
@@ -148,11 +151,11 @@ class CalendarEvent(Base):
     title: Mapped[str] = mapped_column(String(512))
     starts_at: Mapped[datetime] = mapped_column(DateTime)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime)
-    reminder_minutes: Mapped[int | None] = mapped_column(Integer)
     repeat: Mapped[str] = mapped_column(Enum(RepeatType), default=RepeatType.NONE)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="calendar_events")
+    reminders: Mapped[list["Reminder"]] = relationship(back_populates="event", cascade="all, delete-orphan")
 
 
 class UserIntegration(Base):

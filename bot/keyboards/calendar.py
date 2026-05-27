@@ -2,12 +2,13 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.db.models import CalendarEvent
+from bot.utils.dt import fmt_full
 
 
-def events_list_keyboard(events: list[CalendarEvent]) -> InlineKeyboardMarkup:
+def events_list_keyboard(events: list[CalendarEvent], tz_name: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for ev in events:
-        time_str = ev.starts_at.strftime("%d.%m %H:%M")
+        time_str = fmt_full(ev.starts_at, tz_name)
         builder.button(
             text=f"📅 {time_str} — {ev.title[:35]}",
             callback_data=f"event:{ev.id}",

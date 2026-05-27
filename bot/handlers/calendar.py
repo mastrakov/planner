@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -10,6 +10,7 @@ from bot.db.repo.calendar import CalendarRepo
 from bot.db.repo.integrations import IntegrationRepo
 from bot.keyboards.calendar import event_detail_keyboard, events_list_keyboard
 from bot.services.integrations.registry import registry
+from bot.utils.dt import fmt_full, fmt_time, now_utc
 
 router = Router()
 
@@ -17,13 +18,13 @@ router = Router()
 @router.message(Command("calendar"))
 async def cmd_calendar(message: Message, user: User, session: AsyncSession) -> None:
     repo = CalendarRepo(session)
-    now = datetime.utcnow()
+    now = now_utc()
     week_ahead = now + timedelta(days=7)
     events = await repo.get_for_date_range(user.id, now, week_ahead)
     if not events:
         await message.answer("Событий на ближайшие 7 дней нет.")
         return
-    await message.answer("Ближайшие события:", reply_markup=events_list_keyboard(events))
+    await message.answer("Ближайшие события:", reply_markup=events_list_keyboard(events, user.timezone))
 
 
 @router.callback_query(F.data.startswith("event:"))
@@ -35,8 +36,8 @@ async def cb_event_detail(callback: CallbackQuery, user: User, session: AsyncSes
         await callback.answer("Событие не найдено.")
         return
 
-    time_str = event.starts_at.strftime("%d.%m.%Y %H:%M")
-    end_str = f" — {event.ends_at.strftime('%H:%M')}" if event.ends_at else ""
+    time_str = fmt_full(event.starts_at, user.timezone)
+    end_str = f" — {fmt_time(event.ends_at, user.timezone)}" if event.ends_at else ""
     reminder_str = f"\nНапоминание: за {event.reminder_minutes} мин." if event.reminder_minutes else ""
     text = f"<b>{event.title}</b>\n{time_str}{end_str}{reminder_str}"
 
@@ -66,7 +67,6 @@ async def cb_event_delete(callback: CallbackQuery, user: User, session: AsyncSes
                 pass
 
     await repo.delete(event)
-    await session.commit()
     await callback.answer("Событие удалено.")
     await callback.message.delete()  # type: ignore[union-attr]
 
@@ -74,10 +74,10 @@ async def cb_event_delete(callback: CallbackQuery, user: User, session: AsyncSes
 @router.callback_query(F.data == "calendar_back")
 async def cb_calendar_back(callback: CallbackQuery, user: User, session: AsyncSession) -> None:
     repo = CalendarRepo(session)
-    now = datetime.utcnow()
+    now = now_utc()
     week_ahead = now + timedelta(days=7)
     events = await repo.get_for_date_range(user.id, now, week_ahead)
     await callback.message.edit_text(  # type: ignore[union-attr]
-        "Ближайшие события:", reply_markup=events_list_keyboard(events)
+        "Ближайшие события:", reply_markup=events_list_keyboard(events, user.timezone)
     )
     await callback.answer()

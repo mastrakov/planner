@@ -6,6 +6,7 @@ import pytest
 
 from bot.db.models import AIModel
 from bot.services.briefing import BriefingService
+from bot.utils.dt import now_utc
 
 
 def _make_user() -> SimpleNamespace:
@@ -72,7 +73,7 @@ async def test_briefing_contains_overdue_tasks() -> None:
 async def test_briefing_contains_today_events() -> None:
     session = AsyncMock()
     user = _make_user()
-    now = datetime.utcnow()
+    now = now_utc()
     event = _make_event(1, "Встреча с командой", starts_at=now.replace(hour=10))
 
     with (

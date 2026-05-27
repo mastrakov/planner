@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import anthropic
 from openai import AsyncOpenAI
@@ -8,6 +8,7 @@ from bot.config import settings
 from bot.db.models import AIModel, User
 from bot.db.repo.calendar import CalendarRepo
 from bot.db.repo.tasks import TaskRepo
+from bot.utils.dt import fmt_date, fmt_time, now_utc
 
 _anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 _openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
@@ -20,7 +21,7 @@ class BriefingService:
         self._calendar_repo = CalendarRepo(session)
 
     async def build_morning_briefing(self, user: User) -> str:
-        now = datetime.utcnow()
+        now = now_utc()
         today_end = now.replace(hour=23, minute=59, second=59)
 
         overdue_tasks = await self._task_repo.get_overdue(user.id)
@@ -31,18 +32,18 @@ class BriefingService:
         today_events = await self._calendar_repo.get_for_date_range(user.id, now, today_end)
         all_tasks = await self._task_repo.get_by_user(user.id)
 
-        lines: list[str] = [f"<b>Доброе утро!</b> {now.strftime('%d.%m.%Y')}"]
+        lines: list[str] = [f"<b>Доброе утро!</b> {fmt_date(now, user.timezone)}"]
 
         if overdue_tasks:
             lines.append("\n<b>Просроченные задачи:</b>")
             for t in overdue_tasks:
-                due_str = t.due_date.strftime("%d.%m") if t.due_date else ""
+                due_str = fmt_date(t.due_date, user.timezone) if t.due_date else ""
                 lines.append(f"  ❗ {t.title} (до {due_str})")
 
         if today_events:
             lines.append("\n<b>События сегодня:</b>")
             for ev in today_events:
-                lines.append(f"  📅 {ev.starts_at.strftime('%H:%M')} — {ev.title}")
+                lines.append(f"  📅 {fmt_time(ev.starts_at, user.timezone)} — {ev.title}")
 
         if today_tasks:
             lines.append("\n<b>Задачи на сегодня:</b>")
@@ -87,7 +88,7 @@ class BriefingService:
             return ""
 
     async def build_weekly_plan(self, user: User) -> str:
-        now = datetime.utcnow()
+        now = now_utc()
         week_end = now + timedelta(days=7)
 
         week_tasks = [
@@ -96,19 +97,19 @@ class BriefingService:
         ]
         week_events = await self._calendar_repo.get_for_date_range(user.id, now, week_end)
 
-        lines: list[str] = [f"<b>План на неделю</b> ({now.strftime('%d.%m')} — {week_end.strftime('%d.%m')})"]
+        lines: list[str] = [f"<b>План на неделю</b> ({fmt_date(now, user.timezone)} — {fmt_date(week_end, user.timezone)})"]
 
         if week_events:
             lines.append("\n<b>События:</b>")
             for ev in week_events:
-                lines.append(f"  📅 {ev.starts_at.strftime('%d.%m %H:%M')} — {ev.title}")
+                lines.append(f"  📅 {fmt_time(ev.starts_at, user.timezone)} {fmt_date(ev.starts_at, user.timezone)} — {ev.title}")
 
         if week_tasks:
             lines.append("\n<b>Задачи с дедлайном:</b>")
             grouped: dict[str, list[str]] = {}
             for t in week_tasks:
                 lbl = f"{t.task_list.emoji} {t.task_list.name}"
-                due = t.due_date.strftime("%d.%m") if t.due_date else ""
+                due = fmt_date(t.due_date, user.timezone) if t.due_date else ""
                 grouped.setdefault(lbl, []).append(f"  • {t.title} (до {due})")
             for lbl, items in grouped.items():
                 lines.append(f"\n{lbl}")

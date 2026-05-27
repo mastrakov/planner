@@ -50,7 +50,6 @@ async def cb_model_set(callback: CallbackQuery, user: User, session: AsyncSessio
         return
     repo = UserRepo(session)
     await repo.update(user, ai_model=model_value)
-    await session.commit()
     label = "Claude (claude-sonnet-4-6)" if model_value == "claude" else "GPT-4o"
     await callback.answer(f"Модель изменена: {label}")
     await callback.message.delete()  # type: ignore[union-attr]
@@ -79,7 +78,6 @@ async def process_briefing_time(message: Message, user: User, session: AsyncSess
 
     repo = UserRepo(session)
     await repo.update(user, briefing_time=briefing_time)
-    await session.commit()
     await state.clear()
     await message.answer(f"Время брифинга установлено: {text}")
 
@@ -106,7 +104,6 @@ async def process_timezone(message: Message, user: User, session: AsyncSession, 
 
     repo = UserRepo(session)
     await repo.update(user, timezone=tz_name)
-    await session.commit()
     await state.clear()
     await message.answer(f"Часовой пояс установлен: {tz_name}")
 

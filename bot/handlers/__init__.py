@@ -7,6 +7,7 @@ from bot.handlers import (
     confirm_intent,
     google_auth,
     lists_fsm,
+    reminders,
     settings,
     start,
     tasks,
@@ -22,6 +23,7 @@ def get_main_router() -> Router:
     router.include_router(lists_fsm.router)       # FSM: create/rename lists
     router.include_router(confirm_intent.router)  # FSM: confirm low-confidence intents
     router.include_router(calendar.router)
+    router.include_router(reminders.router)
     router.include_router(settings.router)
     router.include_router(analytics.router)
     router.include_router(google_auth.router)

@@ -1,4 +1,4 @@
-from datetime import datetime
+from bot.utils.dt import now_utc
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -32,7 +32,7 @@ def _make_task(task_id: int, title: str, list_id: int = 1, priority: str = Prior
         priority=priority,
         due_date=None,
         completed_at=None,
-        created_at=datetime.utcnow(),
+        created_at=now_utc(),
         task_list=task_list,
     )
 

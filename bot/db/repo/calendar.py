@@ -16,7 +16,6 @@ class CalendarRepo:
         title: str,
         starts_at: datetime,
         ends_at: datetime | None = None,
-        reminder_minutes: int | None = None,
         external_id: str | None = None,
         repeat: str = "none",
     ) -> CalendarEvent:
@@ -25,7 +24,6 @@ class CalendarRepo:
             title=title,
             starts_at=starts_at,
             ends_at=ends_at,
-            reminder_minutes=reminder_minutes,
             external_id=external_id,
             repeat=repeat,
         )

@@ -19,8 +19,9 @@ _openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 
 def _current_dt_for_user(tz_name: str) -> datetime:
+    """Return current local time for the user, WITH tzinfo so the prompt includes the UTC offset."""
     tz = pytz.timezone(tz_name)
-    return datetime.now(tz=timezone.utc).astimezone(tz).replace(tzinfo=None)
+    return datetime.now(tz=timezone.utc).astimezone(tz)
 
 
 def _history_to_messages(history: list[ChatHistory]) -> list[dict[str, str]]:
@@ -29,24 +30,30 @@ def _history_to_messages(history: list[ChatHistory]) -> list[dict[str, str]]:
 
 async def _parse_with_claude(system: str, messages: list[dict[str, str]], text: str) -> str:
     all_messages = messages + [{"role": "user", "content": text}]
+    logger.debug("Claude request: history_len=%d text=%r", len(messages), text)
     response = await _anthropic_client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=1024,
         system=system,
         messages=all_messages,  # type: ignore[arg-type]
     )
-    return response.content[0].text  # type: ignore[union-attr]
+    raw = response.content[0].text  # type: ignore[union-attr]
+    logger.debug("Claude response: %s", raw)
+    return raw
 
 
 async def _parse_with_gpt4o(system: str, messages: list[dict[str, str]], text: str) -> str:
     all_messages = [{"role": "system", "content": system}] + messages + [{"role": "user", "content": text}]
+    logger.debug("GPT-4o request: history_len=%d text=%r", len(messages), text)
     response = await _openai_client.chat.completions.create(
         model="gpt-4o",
         max_tokens=1024,
         messages=all_messages,  # type: ignore[arg-type]
         response_format={"type": "json_object"},
     )
-    return response.choices[0].message.content or "{}"
+    raw = response.choices[0].message.content or "{}"
+    logger.debug("GPT-4o response: %s", raw)
+    return raw
 
 
 class IntentParser:
@@ -66,6 +73,10 @@ class IntentParser:
         system = build_system_prompt(current_dt, user.timezone, list_names)
         history_messages = _history_to_messages(history)
 
+        logger.debug(
+            "Parsing intent: user_id=%d model=%s history_len=%d text=%r",
+            user.id, user.ai_model, len(history), text,
+        )
         try:
             if user.ai_model == AIModel.GPT4O:
                 raw = await _parse_with_gpt4o(system, history_messages, text)
@@ -73,7 +84,13 @@ class IntentParser:
                 raw = await _parse_with_claude(system, history_messages, text)
 
             data = json.loads(raw)
-            return ParsedResponse.model_validate(data)
+            parsed = ParsedResponse.model_validate(data)
+            intent_types = [i.type for i in parsed.intents]
+            logger.debug(
+                "Parsed intents=%s confidence=%.2f clarification=%r",
+                intent_types, parsed.confidence, parsed.clarification_needed,
+            )
+            return parsed
         except Exception:
             logger.exception("Intent parsing failed for text=%r", text)
             from bot.services.intent.models import AIChatIntent

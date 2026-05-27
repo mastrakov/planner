@@ -28,6 +28,8 @@ async def handle_text(message: Message, user: User, session: AsyncSession, state
     if not message.text:
         return
 
+    logger.debug("handle_text: user_id=%d text=%r", user.id, message.text)
+
     from bot.services.analytics import AnalyticsService
     from bot.services.briefing import BriefingService
     from bot.services.calendar import CalendarService
@@ -55,7 +57,7 @@ async def handle_text(message: Message, user: User, session: AsyncSession, state
         briefing_service=BriefingService(session),
         analytics_service=AnalyticsService(session),
     )
-    await intent_router.route(parsed, user, message, state=state)
+    await intent_router.route(parsed, user, message, state=state, history=history)
 
     if parsed.intents:
         intent_type = parsed.intents[0].type

@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import User
 from bot.db.repo.tasks import TaskRepo
+from bot.utils.dt import fmt_full
 from bot.keyboards.tasks import (
     confirm_keyboard,
     list_detail_keyboard,
@@ -55,7 +56,7 @@ async def cb_task_detail(callback: CallbackQuery, user: User, session: AsyncSess
 
     lists = await repo.get_lists_by_user(user.id)
     prio = {"high": "🔴 Высокий", "medium": "🟡 Средний", "low": "🟢 Низкий"}.get(task.priority, "")
-    due_str = f"\nДедлайн: {task.due_date.strftime('%d.%m.%Y %H:%M')}" if task.due_date else ""
+    due_str = f"\nДедлайн: {fmt_full(task.due_date, user.timezone)}" if task.due_date else ""
     status = "Выполнена" if task.is_completed else "Активна"
     text = (
         f"<b>{task.title}</b>\n"
@@ -76,7 +77,6 @@ async def cb_task_complete(callback: CallbackQuery, user: User, session: AsyncSe
         await callback.answer("Задача не найдена.")
         return
     await repo.complete(task)
-    await session.commit()
     await callback.answer("Задача выполнена!")
     await callback.message.delete()  # type: ignore[union-attr]
 
@@ -100,7 +100,6 @@ async def cb_task_delete_confirmed(callback: CallbackQuery, user: User, session:
         await callback.answer("Задача не найдена.")
         return
     await repo.delete(task)
-    await session.commit()
     await callback.answer("Задача удалена.")
     await callback.message.delete()  # type: ignore[union-attr]
 
@@ -127,7 +126,6 @@ async def cb_task_move(callback: CallbackQuery, user: User, session: AsyncSessio
         await callback.answer("Задача не найдена.")
         return
     await repo.move_to_list(task, list_id)
-    await session.commit()
     await callback.answer("Задача перемещена!")
     await callback.message.delete()  # type: ignore[union-attr]
 
@@ -196,7 +194,6 @@ async def cb_list_delete_confirmed(callback: CallbackQuery, user: User, session:
         await callback.answer("Список не найден.")
         return
     await repo.delete_list(lst)
-    await session.commit()
     await callback.answer("Список удалён.")
     await callback.message.delete()  # type: ignore[union-attr]
 

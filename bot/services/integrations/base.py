@@ -8,7 +8,6 @@ class CalendarEventDTO(BaseModel):
     title: str
     starts_at: datetime
     ends_at: datetime | None = None
-    reminder_minutes: int | None = None
     external_id: str | None = None
 
 

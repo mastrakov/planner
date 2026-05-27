@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from aiogram import Bot, Dispatcher
@@ -10,17 +11,21 @@ from aiogram.types import Update
 from aiohttp import web
 
 from bot.config import settings
-from bot.db.base import create_all
 from bot.handlers import get_main_router
 from bot.middlewares import AuthMiddleware, UserMiddleware
 from bot.services.integrations.google.calendar import GoogleCalendarProvider
 from bot.services.integrations.registry import registry
 from bot.services.scheduler import setup_scheduler
 
+_log_level = logging.DEBUG if os.getenv("ENV", "local") == "local" else logging.INFO
 logging.basicConfig(
-    level=logging.INFO,
+    level=_log_level,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+# Keep noisy libs at INFO even in local mode
+logging.getLogger("aiogram").setLevel(logging.INFO)
+logging.getLogger("aiohttp").setLevel(logging.INFO)
+logging.getLogger("sqlalchemy").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +40,8 @@ def build_dispatcher() -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
 
     dp.update.outer_middleware(AuthMiddleware())
-    dp.update.outer_middleware(UserMiddleware())
+    dp.message.outer_middleware(UserMiddleware())
+    dp.callback_query.outer_middleware(UserMiddleware())
 
     dp.include_router(get_main_router())
     return dp
@@ -138,7 +144,6 @@ async def run_webhook() -> None:
 
 
 async def main() -> None:
-    await create_all()
     if settings.is_local:
         await run_polling()
     else:
@@ -146,4 +151,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    from bot.db.base import run_migrations
+    run_migrations()
     asyncio.run(main())

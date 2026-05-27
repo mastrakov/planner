@@ -8,7 +8,9 @@ def dev() -> None:
     """uv run dev — polling mode (local development)."""
     import os
     os.environ.setdefault("ENV", "local")
+    from bot.db.base import run_migrations
     from bot.main import main
+    run_migrations()
     asyncio.run(main())
 
 
@@ -16,7 +18,9 @@ def service() -> None:
     """uv run service — webhook mode (production)."""
     import os
     os.environ.setdefault("ENV", "production")
+    from bot.db.base import run_migrations
     from bot.main import main
+    run_migrations()
     asyncio.run(main())
 
 

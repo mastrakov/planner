@@ -15,7 +15,9 @@ Telegram ──HTTPS──► nginx ──► aiogram 3 (webhook)
            ▼             ▼                  ▼         ▼
       Claude API     OpenAI API         TaskSvc  CalendarSvc
                          │                         │
-                     Whisper API            IntegrationRegistry
+                     Whisper API            ReminderSvc
+                                                   │
+                                          IntegrationRegistry
                                                    │
                                           GoogleCalendarProvider
                                           (+ другие в будущем)
@@ -38,6 +40,7 @@ Telegram ──HTTPS──► nginx ──► aiogram 3 (webhook)
 | ORM | SQLAlchemy 2.0 async |
 | БД драйвер | asyncpg |
 | База данных | PostgreSQL 16 |
+| Миграции | Alembic |
 | Планировщик | APScheduler |
 | AI | Anthropic API (Claude), OpenAI API (GPT-4o, Whisper) |
 | Шифрование | cryptography (Fernet) |
@@ -54,68 +57,66 @@ Telegram ──HTTPS──► nginx ──► aiogram 3 (webhook)
 
 ```
 planner/
-├── docs/                          # документация
+├── docs/
 │   ├── requirements.md
 │   └── architecture.md
 ├── bot/
-│   ├── __init__.py
 │   ├── main.py                    # точка входа, запуск polling/webhook
 │   ├── config.py                  # pydantic-settings, все env переменные
 │   ├── db/
-│   │   ├── __init__.py
 │   │   ├── base.py                # Base, engine, session factory
 │   │   ├── models.py              # все SQLAlchemy модели
-│   │   └── repo/                  # репозитории (data access layer)
-│   │       ├── __init__.py
+│   │   ├── migrations/            # Alembic
+│   │   │   └── versions/
+│   │   └── repo/
 │   │       ├── users.py
 │   │       ├── tasks.py
 │   │       ├── reminders.py
 │   │       ├── calendar.py
+│   │       ├── chat_history.py
 │   │       └── integrations.py
-│   ├── handlers/                  # aiogram роутеры
-│   │   ├── __init__.py
+│   ├── handlers/
+│   │   ├── __init__.py            # get_main_router(), порядок подключения
 │   │   ├── start.py               # /start, /help
-│   │   ├── tasks.py               # /tasks, /lists
-│   │   ├── calendar.py            # /calendar
-│   │   ├── settings.py            # /settings, /model
-│   │   ├── analytics.py           # /analytics, /weekly
+│   │   ├── tasks.py               # /tasks, /lists + inline callbacks
+│   │   ├── lists_fsm.py           # FSM: создание/переименование списков
+│   │   ├── calendar.py            # /calendar + inline callbacks
+│   │   ├── reminders.py           # /reminders + inline callbacks
+│   │   ├── analytics.py           # /analytics, /weekly, /morning
+│   │   ├── settings.py            # /settings, /model + FSM настроек
+│   │   ├── google_auth.py         # /connect_google, /disconnect_google, OAuth callback
 │   │   ├── voice.py               # голосовые сообщения
-│   │   ├── google_auth.py         # /connect_google, OAuth callback
-│   │   └── ai_chat.py             # свободный диалог, intent роутинг
+│   │   ├── confirm_intent.py      # FSM: подтверждение низкоуверенных intent'ов
+│   │   └── ai_chat.py             # catch-all: текст → intent парсинг
 │   ├── services/
-│   │   ├── __init__.py
-│   │   ├── voice.py               # ogg → mp3 → Whisper → текст
-│   │   ├── briefing.py            # сборка утреннего брифинга
-│   │   ├── analytics.py           # недельная аналитика
-│   │   ├── scheduler.py           # APScheduler jobs
 │   │   ├── tasks.py               # бизнес-логика задач
-│   │   ├── calendar.py            # бизнес-логика событий
-│   │   ├── reminders.py           # бизнес-логика напоминаний
+│   │   ├── calendar.py            # бизнес-логика событий + создание напоминаний
+│   │   ├── reminders.py           # бизнес-логика напоминаний (CRUD + check_and_send)
+│   │   ├── briefing.py            # сборка утреннего брифинга и недельного плана
+│   │   ├── analytics.py           # недельная и месячная статистика
+│   │   ├── scheduler.py           # APScheduler jobs
+│   │   ├── voice.py               # ogg → mp3 → Whisper → текст
 │   │   ├── intent/
-│   │   │   ├── __init__.py
 │   │   │   ├── parser.py          # текст → AI → ParsedResponse (Pydantic)
 │   │   │   ├── router.py          # ParsedIntent → нужный сервис
-│   │   │   ├── models.py          # Pydantic схемы для всех намерений
-│   │   │   └── prompts.py         # system prompts
+│   │   │   ├── models.py          # Pydantic-схемы всех намерений
+│   │   │   └── prompts.py         # system prompt для intent-парсинга
 │   │   └── integrations/
-│   │       ├── __init__.py
-│   │       ├── base.py            # абстрактные классы провайдеров
+│   │       ├── base.py            # CalendarProvider (ABC), CalendarEventDTO
 │   │       ├── registry.py        # IntegrationRegistry
 │   │       └── google/
-│   │           ├── __init__.py
 │   │           ├── calendar.py    # GoogleCalendarProvider
 │   │           └── auth.py        # OAuth2 flow
 │   ├── keyboards/
-│   │   ├── __init__.py
-│   │   ├── tasks.py               # inline клавиатуры для задач
+│   │   ├── tasks.py
 │   │   ├── calendar.py
 │   │   └── settings.py
-│   └── middlewares/
-│       ├── __init__.py
-│       ├── auth.py                # проверка whitelist
-│       └── user.py                # инжект user объекта в handler
+│   ├── middlewares/
+│   │   ├── auth.py                # проверка whitelist
+│   │   └── user.py                # инжект user объекта в handler
+│   └── utils/
+│       └── dt.py                  # now_utc(), fmt_date(), fmt_time(), fmt_full()
 ├── tests/
-│   ├── __init__.py
 │   ├── conftest.py
 │   ├── test_intent_parser.py
 │   ├── test_tasks.py
@@ -123,17 +124,13 @@ planner/
 ├── deploy/
 │   ├── nginx.conf
 │   └── certbot-init.sh
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-├── docker-compose.yml             # продакшен
-├── docker-compose.dev.yml         # локальная разработка (только БД)
+├── .github/workflows/ci.yml
+├── docker-compose.yml
+├── docker-compose.dev.yml
 ├── Dockerfile
 ├── pyproject.toml
-├── uv.lock
-├── .python-version
-├── .env.example
-└── .gitignore
+├── alembic.ini
+└── .env.example
 ```
 
 ---
@@ -144,12 +141,18 @@ planner/
 Принимают Telegram updates, валидируют входные данные, вызывают сервисы, формируют ответ.
 Не содержат бизнес-логику — только оркестрацию.
 
+**Порядок подключения роутеров важен** (более специфичные перед catch-all):
+```
+start → tasks → lists_fsm → confirm_intent → calendar → reminders
+→ settings → analytics → google_auth → voice → ai_chat (catch-all)
+```
+
 ### 2. Services (бизнес-логика)
 Реализуют логику приложения. Не знают про Telegram — работают с доменными объектами.
 Вызывают репозитории для работы с БД и провайдеры интеграций.
 
 ### 3. Repositories (data access)
-Инкапсулируют все SQL запросы. Сервисы не пишут SQL напрямую.
+Инкапсулируют все SQL-запросы. Сервисы не пишут SQL напрямую.
 Один репозиторий на модель/агрегат.
 
 ### 4. Integrations (внешние сервисы)
@@ -179,7 +182,7 @@ task_lists
 ├── name
 ├── emoji
 ├── color
-├── position (порядок отображения)
+├── position
 └── created_at
 
 tasks
@@ -199,24 +202,30 @@ task_events
 ├── event_type (created/completed/postponed/deleted/updated)
 └── occurred_at
 
+calendar_events
+├── id
+├── user_id → users.id
+├── external_id (Google Calendar event id, nullable)
+├── title
+├── starts_at
+├── ends_at (nullable)
+├── repeat (none/daily/weekly/monthly)
+└── created_at
+
 reminders
 ├── id
 ├── user_id → users.id
+├── event_id → calendar_events.id (nullable, CASCADE)  ← привязка к событию
 ├── title
 ├── remind_at
 ├── repeat (none/daily/weekly/monthly)
 ├── is_sent
 └── created_at
 
-calendar_events
-├── id
-├── user_id → users.id
-├── external_id (Google Calendar event id)
-├── title
-├── starts_at
-├── ends_at
-├── reminder_minutes
-└── created_at
+  Два сценария использования:
+  • event_id IS NULL  → standalone-напоминание («напомни через 10 минут»)
+  • event_id IS NOT NULL → напоминание к событию, удаляется каскадно вместе с ним
+  Одно событие может иметь несколько напоминаний с разными remind_at.
 
 user_integrations
 ├── id
@@ -235,9 +244,16 @@ chat_history
 └── created_at
 ```
 
+### Миграции
+
+| Revision | Описание |
+|---|---|
+| `1a84aa9cb3d8` | Initial schema |
+| `a3f2b1c4d5e6` | `reminders.event_id` FK → `calendar_events`, удалён `calendar_events.reminder_minutes` |
+
 ---
 
-## Intent парсинг
+## Intent-парсинг
 
 ### Flow
 ```
@@ -252,36 +268,83 @@ IntentParser.parse(text, user, history)
     └── Pydantic валидирует → ParsedResponse
            │
            ▼
-    IntentRouter.route(parsed_response, user)
+    IntentRouter.route(parsed, user, message, state, history)
            │
-           ├── confidence < 0.8 → показать подтверждение
            ├── clarification_needed → задать вопрос
-           ├── destructive action → показать подтверждение
-           └── иначе → выполнить, показать результат
+           ├── confidence < 0.8 → FSM подтверждения
+           ├── destructive action → FSM подтверждения
+           └── иначе → _dispatch → нужный сервис
 ```
 
-### Pydantic схемы намерений
+### Pydantic-схемы намерений
 
 ```python
-# Дискриминированный union по полю type
 ParsedIntent = Annotated[
-    CreateTaskIntent
-    | CreateEventIntent
-    | CreateReminderIntent
-    | ListTasksIntent
-    | CompleteTaskIntent
-    | DeleteTaskIntent
-    | UpdateTaskIntent
-    | GetBriefingIntent
-    | GetAnalyticsIntent
-    | AIChatIntent,
-    Field(discriminator="type")
+    CreateTaskIntent        # create_task
+    | CreateEventIntent     # create_event  (reminder_minutes: list[int])
+    | CreateReminderIntent  # create_reminder
+    | ListTasksIntent       # list_tasks
+    | CompleteTaskIntent    # complete_task
+    | DeleteTaskIntent      # delete_task        ← деструктивное
+    | UpdateTaskIntent      # update_task
+    | ListEventsIntent      # list_events
+    | ListRemindersIntent   # list_reminders
+    | DeleteReminderIntent  # delete_reminder    ← деструктивное
+    | UpdateReminderIntent  # update_reminder
+    | GetBriefingIntent     # get_briefing
+    | GetAnalyticsIntent    # get_analytics  (period: "week"|"month")
+    | AIChatIntent,         # ai_chat
+    Field(discriminator="type"),
 ]
 
 class ParsedResponse(BaseModel):
     intents: list[ParsedIntent]
-    confidence: float           # 0.0 - 1.0
+    confidence: float           # 0.0 – 1.0
     clarification_needed: str | None
+
+DESTRUCTIVE_INTENT_TYPES = {"delete_task", "delete_reminder"}
+```
+
+### CreateEventIntent и напоминания
+
+```python
+class CreateEventIntent(BaseModel):
+    type: Literal["create_event"]
+    title: str
+    starts_at: datetime
+    ends_at: datetime | None = None
+    reminder_minutes: list[int] = []  # например [60, 10] → за 1 час и за 10 минут
+```
+
+`CalendarService.create_event` создаёт по одной строке в `reminders` на каждый элемент списка:
+```python
+for minutes in intent.reminder_minutes:
+    remind_at = event.starts_at - timedelta(minutes=minutes)
+    await reminder_repo.create(user_id=..., event_id=event.id, remind_at=remind_at, ...)
+```
+
+---
+
+## Напоминания: жизненный цикл
+
+```
+Создание события с reminder_minutes=[60, 10]
+    │
+    ├── CalendarEvent сохранён в calendar_events
+    └── 2 строки в reminders (event_id=..., is_sent=False)
+
+APScheduler: check_reminders каждую минуту
+    │
+    └── ReminderRepo.get_pending() → remind_at <= now AND is_sent=False
+              │
+              ├── bot.send_message(user_id, "🔔 Напоминание: ...")
+              └── ReminderRepo.mark_sent(reminder)
+                        │
+                        ├── repeat=none  → is_sent = True
+                        └── repeat≠none  → remind_at += period (цикл до remind_at > now)
+
+Удаление CalendarEvent
+    └── reminders с event_id=event.id удаляются каскадно (ondelete=CASCADE)
 ```
 
 ---
@@ -291,27 +354,21 @@ class ParsedResponse(BaseModel):
 ```python
 # base.py
 class CalendarProvider(ABC):
-    @abstractmethod
     async def create_event(self, user_id: int, event: CalendarEventDTO) -> str: ...
-
-    @abstractmethod
     async def list_events(self, user_id: int, date_from: date, date_to: date) -> list[CalendarEventDTO]: ...
-
-    @abstractmethod
     async def delete_event(self, user_id: int, event_id: str) -> None: ...
-
-    @abstractmethod
     async def update_event(self, user_id: int, event_id: str, event: CalendarEventDTO) -> None: ...
 
-# registry.py
-class IntegrationRegistry:
-    def get_calendar(self, provider_name: str) -> CalendarProvider: ...
-    def register_calendar(self, name: str, provider: CalendarProvider) -> None: ...
+class CalendarEventDTO(BaseModel):
+    title: str
+    starts_at: datetime
+    ends_at: datetime | None = None
+    external_id: str | None = None
 ```
 
 Добавление новой интеграции:
-1. Создать `services/integrations/notion/calendar.py` с классом `NotionCalendarProvider(CalendarProvider)`
-2. Зарегистрировать в `registry.register_calendar("notion", NotionCalendarProvider())`
+1. Создать `services/integrations/notion/calendar.py` → `NotionCalendarProvider(CalendarProvider)`
+2. Зарегистрировать: `registry.register_calendar("notion", NotionCalendarProvider())`
 3. Добавить OAuth flow если нужно
 
 ---
@@ -319,13 +376,18 @@ class IntegrationRegistry:
 ## Автоматические рассылки (APScheduler)
 
 ```python
-# scheduler.py — jobs при старте бота
-scheduler.add_job(send_morning_briefings, "cron", hour=0, minute=0)  # каждый час проверяем у кого сейчас время брифинга
-scheduler.add_job(send_weekly_summary, "cron", day_of_week="sun", hour=20, minute=0)
-scheduler.add_job(check_reminders, "interval", minutes=1)
+# Все три джобы запускаются каждый час в :00
+# Логика часового пояса — внутри каждой функции
+scheduler.add_job(send_morning_briefings, "cron", minute=0)
+scheduler.add_job(send_weekly_summary,    "cron", minute=0)
+scheduler.add_job(check_reminders,        "interval", minutes=1)
 ```
 
-`send_morning_briefings` — проходит по всем активным пользователям, у кого `briefing_time` совпадает с текущим временем в их часовом поясе → отправляет брифинг.
+**`send_morning_briefings`** — проходит по всем активным пользователям, у кого `briefing_time` совпадает с текущим часом в их часовом поясе (допуск: первые 5 минут часа). В понедельник дополнительно отправляет недельный план.
+
+**`send_weekly_summary`** — та же логика: воскресенье, 20:xx по часовому поясу пользователя.
+
+**`check_reminders`** — выбирает записи из `reminders` где `remind_at <= now AND is_sent=False`, отправляет уведомление, обновляет запись.
 
 ---
 
@@ -347,6 +409,20 @@ push/PR → GitHub Actions
 
 ---
 
+## Безопасность
+
+| Механизм | Реализация |
+|---|---|
+| Whitelist | `AuthMiddleware` проверяет каждый update, неизвестные `user_id` получают отказ |
+| Webhook secret | Telegram подписывает запросы, aiogram проверяет подпись |
+| Секреты | Только в `.env` на VPS и GitHub Secrets, в репозиторий не попадают |
+| Google токены | Шифруются Fernet (`ENCRYPTION_KEY`) перед записью в БД |
+| Сеть | PostgreSQL и бот не доступны снаружи Docker-сети, только nginx на 80/443 |
+| Фаервол | UFW: открыты только порты 22, 80, 443 |
+| Утечки секретов | gitleaks сканирует коммиты в CI |
+
+---
+
 ## Локальная разработка
 
 ```bash
@@ -359,21 +435,12 @@ uv sync
 # 3. Скопировать и заполнить .env
 cp .env.example .env
 
-# 4. Запустить бота (polling режим)
+# 4. Применить миграции
+uv run alembic upgrade head
+
+# 5. Запустить бота (polling режим)
 uv run python -m bot.main
 ```
 
-В `.env` переменная `ENVIRONMENT=local` переключает бота в polling режим.
-Google Calendar не работает локально (нет домена для OAuth callback).
-
----
-
-## Безопасность
-
-- **Whitelist:** middleware проверяет каждый update, неизвестные user_id получают отказ
-- **Webhook secret:** Telegram подписывает запросы, aiogram проверяет подпись
-- **Секреты:** только в `.env` на VPS и GitHub Secrets, в репозиторий не попадают
-- **Google токены:** шифруются Fernet (`ENCRYPTION_KEY` в `.env`) перед записью в БД
-- **Сеть:** PostgreSQL и бот не доступны снаружи Docker сети, только nginx торчит на 80/443
-- **UFW:** открыты порты 22, 80, 443
-- **gitleaks:** сканирует коммиты на случайно закоммиченные секреты
+`ENVIRONMENT=local` в `.env` переключает бота в polling-режим.
+Google Calendar OAuth не работает локально (нет домена для callback) — эту интеграцию тестировать на стейдже.
