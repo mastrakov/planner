@@ -56,8 +56,13 @@ async def handle_text(message: Message, user: User, session: AsyncSession, state
         briefing_service=BriefingService(session),
         analytics_service=AnalyticsService(session),
     )
-    await intent_router.route(parsed, user, message, state=state, history=history)
+    ai_reply = await intent_router.route(parsed, user, message, state=state, history=history)
 
     if parsed.intents:
-        intent_type = parsed.intents[0].type
-        await history_repo.add(user.id, "assistant", f"(выполнено: {intent_type})")
+        if ai_reply is not None:
+            # For free-form AI chat: store the actual reply so future context is meaningful
+            await history_repo.add(user.id, "assistant", ai_reply)
+        else:
+            # For structured actions (create_task, etc.): store a compact label
+            intent_type = parsed.intents[0].type
+            await history_repo.add(user.id, "assistant", f"(выполнено: {intent_type})")

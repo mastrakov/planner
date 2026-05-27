@@ -82,7 +82,12 @@ class IntentRouter:
         message: Message,
         state: FSMContext | None = None,
         history: list[ChatHistory] | None = None,
-    ) -> None:
+    ) -> str | None:
+        """Route parsed intents to services and return the bot's reply text (for chat history).
+
+        Returns the text of the bot's reply if it is a free-form AI chat response,
+        otherwise returns None (structured actions don't need verbatim history).
+        """
         logger.debug(
             "Routing: user_id=%d intents=%s confidence=%.2f",
             user.id, [i.type for i in parsed.intents], parsed.confidence,
@@ -91,7 +96,7 @@ class IntentRouter:
         if parsed.clarification_needed:
             logger.debug("Routing: clarification needed → %r", parsed.clarification_needed)
             await message.answer(parsed.clarification_needed)
-            return
+            return None
 
         has_destructive = any(
             intent.type in DESTRUCTIVE_INTENT_TYPES for intent in parsed.intents
@@ -120,10 +125,14 @@ class IntentRouter:
                 await message.answer(
                     f"{prefix}:\n{summary}\n\nПодтвердите, написав «да»."
                 )
-            return
+            return None
 
+        ai_reply: str | None = None
         for intent in parsed.intents:
-            await self._dispatch(intent, user, message, history=history)
+            reply = await self._dispatch(intent, user, message, history=history)
+            if reply is not None:
+                ai_reply = reply
+        return ai_reply
 
     async def execute_confirmed(
         self,
@@ -142,7 +151,8 @@ class IntentRouter:
         user: User,
         message: Message,
         history: list[ChatHistory] | None = None,
-    ) -> None:
+    ) -> str | None:
+        """Dispatch a single intent. Returns AI reply text for ai_chat intents, None otherwise."""
         logger.debug("Dispatching intent=%s for user_id=%d", intent.type, user.id)
         try:
             if isinstance(intent, CreateTaskIntent):
@@ -197,11 +207,12 @@ class IntentRouter:
                 await message.answer(result, parse_mode="HTML")
 
             elif isinstance(intent, AIChatIntent):
-                await self._handle_ai_chat(intent, user, message, history=history)
+                return await self._handle_ai_chat(intent, user, message, history=history)
 
         except Exception:
             logger.exception("Error dispatching intent %s for user %d", intent.type, user.id)
             await message.answer("Произошла ошибка при выполнении команды. Попробуйте ещё раз.")
+        return None
 
     async def _dispatch_briefing(
         self,
@@ -279,13 +290,15 @@ class IntentRouter:
         user: User,
         message: Message,
         history: list[ChatHistory] | None = None,
-    ) -> None:
+    ) -> str:
         from bot.db.models import AIModel
 
-        # Build conversation history for context (exclude current message — it's in intent.message)
+        # Build conversation history for context.
+        # history is fetched BEFORE the current message is added to DB (see handle_text/handle_voice),
+        # so ALL entries are prior context — do NOT slice off the last one.
         history_messages: list[dict[str, str]] = []
         if history:
-            for h in history[:-1]:  # skip last entry — that's the current user message
+            for h in history:
                 history_messages.append({"role": h.role, "content": h.content})
 
         if user.ai_model == AIModel.GPT4O:
@@ -306,6 +319,7 @@ class IntentRouter:
             text = resp.content[0].text  # type: ignore[union-attr]
 
         await message.answer(text)
+        return text
 
     def _summarize(self, parsed: ParsedResponse) -> str:
         lines: list[str] = []

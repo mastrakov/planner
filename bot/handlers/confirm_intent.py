@@ -80,8 +80,7 @@ async def handle_confirmation(
         await message.answer("Ошибка при восстановлении действия. Попробуйте снова.")
         return
 
-    # Re-parse and execute with forced confidence
-    from bot.db.repo.tasks import TaskRepo
+    # Re-parse and execute
     from bot.services.analytics import AnalyticsService
     from bot.services.briefing import BriefingService
     from bot.services.calendar import CalendarService
@@ -92,8 +91,9 @@ async def handle_confirmation(
 
     try:
         parsed = ParsedResponse.model_validate(parsed_data)
-        # Force execution regardless of confidence or destructive flag
-        parsed.confidence = 1.0
+        # NOTE: we call execute_confirmed which bypasses confidence/destructive checks entirely.
+        # Do NOT mutate parsed.confidence here — ParsedResponse may have validate_assignment
+        # enabled in future and mutation would raise ValidationError.
 
         intent_router = IntentRouter(
             task_service=TaskService(session),

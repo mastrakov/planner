@@ -4,12 +4,13 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import User
+from bot.db.models import AIModel, User
 from bot.db.repo.analytics import AnalyticsRepo
 from bot.db.repo.tasks import TaskRepo
 
 if TYPE_CHECKING:
-    pass
+    import anthropic
+    from openai import AsyncOpenAI
 
 
 # Bar chart width in characters
@@ -30,10 +31,66 @@ class AnalyticsService:
         session: AsyncSession,
         analytics_repo: AnalyticsRepo | None = None,
         task_repo: TaskRepo | None = None,
+        anthropic_client: anthropic.AsyncAnthropic | None = None,
+        openai_client: AsyncOpenAI | None = None,
     ) -> None:
         self._session = session
         self._task_repo = task_repo if task_repo is not None else TaskRepo(session)
         self._analytics_repo = analytics_repo if analytics_repo is not None else AnalyticsRepo(session)
+        self._anthropic_client = anthropic_client
+        self._openai_client = openai_client
+
+    def _get_anthropic_client(self) -> anthropic.AsyncAnthropic:
+        if self._anthropic_client is None:
+            import anthropic as _anthropic
+
+            from bot.config import settings
+
+            self._anthropic_client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        return self._anthropic_client
+
+    def _get_openai_client(self) -> AsyncOpenAI:
+        if self._openai_client is None:
+            from openai import AsyncOpenAI
+
+            from bot.config import settings
+
+            self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        return self._openai_client
+
+    async def _get_ai_insights(
+        self,
+        created: int,
+        completed: int,
+        daily: dict[str, int],
+        user: User,
+    ) -> str:
+        """Generate a short AI insight for the analytics report."""
+        best_day = max(daily, key=lambda k: daily[k]) if daily else "нет данных"
+        completion_rate = round(completed / created * 100) if created else 0
+        prompt = (
+            f"Дай краткие AI-инсайты (2-3 предложения) по статистике задач пользователя. "
+            f"Создано задач: {created}, выполнено: {completed} ({completion_rate}%). "
+            f"Самый продуктивный период: {best_day}. "
+            f"Назови паттерн и дай конкретную рекомендацию."
+        )
+        try:
+            if user.ai_model == AIModel.GPT4O:
+                resp = await self._get_openai_client().chat.completions.create(
+                    model="gpt-4o",
+                    max_tokens=200,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return resp.choices[0].message.content or ""
+            else:
+                resp = await self._get_anthropic_client().messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=200,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return resp.content[0].text  # type: ignore[union-attr]
+        except Exception:
+            return ""
 
     async def get_stats(self, user: User, period: str = "week") -> str:
         if period == "month":
@@ -42,6 +99,7 @@ class AnalyticsService:
 
     async def get_weekly_stats(self, user: User) -> str:
         from datetime import timedelta
+
         from bot.utils.dt import now_utc
         now = now_utc()
         since = now - timedelta(days=7)
@@ -102,10 +160,17 @@ class AnalyticsService:
                     f"  {row['label']}{we_label}: {row['overdue']} задач просрочено{load_hint}"
                 )
 
+        # --- AI insights ---
+        daily_counts = {r["label"]: r["completed"] for r in daily}
+        ai_insight = await self._get_ai_insights(created_count, completed_count, daily_counts, user)
+        if ai_insight:
+            lines.append(f"\n💡 {ai_insight}")
+
         return "\n".join(lines)
 
     async def get_monthly_stats(self, user: User) -> str:
         from datetime import timedelta
+
         from bot.utils.dt import now_utc
         now = now_utc()
         since = now - timedelta(days=30)
@@ -152,5 +217,11 @@ class AnalyticsService:
             lines.append("\n<b>⚠️ Просрочки по неделям:</b>")
             for row in overdue_weeks:
                 lines.append(f"  Неделя {row['label']}: {row['overdue']} задач просрочено")
+
+        # --- AI insights ---
+        weekly_counts = {r["label"]: r["completed"] for r in weekly}
+        ai_insight = await self._get_ai_insights(created_count, completed_count, weekly_counts, user)
+        if ai_insight:
+            lines.append(f"\n💡 {ai_insight}")
 
         return "\n".join(lines)

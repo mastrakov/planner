@@ -53,5 +53,11 @@ async def handle_voice(message: Message, user: User, session: AsyncSession, bot:
         briefing_service=BriefingService(session),
         analytics_service=AnalyticsService(session),
     )
-    await intent_router.route(parsed, user, message)
-    await history_repo.add(user.id, "assistant", f"(обработано намерение: {parsed.intents[0].type if parsed.intents else 'unknown'})")
+    ai_reply = await intent_router.route(parsed, user, message)
+
+    if parsed.intents:
+        if ai_reply is not None:
+            await history_repo.add(user.id, "assistant", ai_reply)
+        else:
+            intent_type = parsed.intents[0].type
+            await history_repo.add(user.id, "assistant", f"(выполнено: {intent_type})")
