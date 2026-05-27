@@ -87,8 +87,8 @@ class BriefingService:
         lines: list[str] = []
 
         # 1. Header
-        weekday_ru = _weekday_ru(now)
-        date_str = fmt_date(now, user.timezone)
+        weekday_ru = _weekday_ru(_now_local)
+        date_str = _now_local.strftime("%d.%m")
         lines.append(f"<b>☀️ Доброе утро! {weekday_ru}, {date_str}</b>")
 
         # 2. Overdue tasks
