@@ -50,7 +50,7 @@ async def cb_model_set(callback: CallbackQuery, user: User, session: AsyncSessio
         return
     repo = UserRepo(session)
     await repo.update(user, ai_model=model_value)
-    label = "Claude (claude-sonnet-4-6)" if model_value == "claude" else "GPT-4o"
+    label = "Claude Haiku" if model_value == "claude" else "GPT-4o"
     await callback.answer(f"Модель изменена: {label}")
     await callback.message.delete()  # type: ignore[union-attr]
 

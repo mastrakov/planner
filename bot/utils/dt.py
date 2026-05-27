@@ -108,7 +108,7 @@ async def parse_user_date(
                 anthropic_client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
             client_a: _anthropic.AsyncAnthropic = anthropic_client  # type: ignore[assignment]
             resp = await client_a.messages.create(
-                model="claude-sonnet-4-6",
+                model="claude-haiku-4-5-20251001",
                 max_tokens=64,
                 system=system,
                 messages=[{"role": "user", "content": text}],
