@@ -127,12 +127,12 @@ class IntentRouter:
                 )
             return None
 
-        ai_reply: str | None = None
+        replies: list[str] = []
         for intent in parsed.intents:
             reply = await self._dispatch(intent, user, message, history=history)
             if reply is not None:
-                ai_reply = reply
-        return ai_reply
+                replies.append(reply)
+        return "\n".join(replies) if replies else None
 
     async def execute_confirmed(
         self,
@@ -156,7 +156,7 @@ class IntentRouter:
         logger.debug("Dispatching intent=%s for user_id=%d", intent.type, user.id)
         try:
             if isinstance(intent, CreateTaskIntent):
-                await self._dispatch_create_task(intent, user, message)
+                return await self._dispatch_create_task(intent, user, message)
 
             elif isinstance(intent, ListTasksIntent):
                 result = await self._tasks.get_tasks_for_user(user=user, intent=intent)
@@ -252,8 +252,14 @@ class IntentRouter:
         intent: CreateTaskIntent,
         user: User,
         message: Message,
-    ) -> None:
-        """Handle create_task with list auto-classification and deadline button."""
+    ) -> str:
+        """Handle create_task with list auto-classification and deadline button.
+
+        Returns a human-readable confirmation string so it can be stored in chat
+        history — this prevents the AI from re-creating the same task when it sees
+        the next message (the previous opaque "(выполнено: create_task)" label gave
+        the model no information about what was actually created).
+        """
         from bot.keyboards.tasks import select_list_keyboard, task_created_keyboard
         from bot.services.tasks import TaskCreateResult
 
@@ -262,7 +268,7 @@ class IntentRouter:
         # No lists — error string returned
         if isinstance(result, str):
             await message.answer(result)
-            return
+            return result
 
         task = result.task
         target_list = result.target_list
@@ -283,6 +289,7 @@ class IntentRouter:
             # Only attach keyboard if there's at least one button (no deadline → show deadline button)
             has_buttons = not task.due_date
             await message.answer(text, reply_markup=kb if has_buttons else None)
+        return text
 
     async def _handle_ai_chat(
         self,
