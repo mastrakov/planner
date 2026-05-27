@@ -115,6 +115,11 @@ async def parse_user_date(
             )
             raw = resp.content[0].text  # type: ignore[union-attr]
 
+        if raw.startswith("```"):
+            raw = raw.split("```", 2)[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.rstrip("`").strip()
         data = json.loads(raw)
         iso = data.get("datetime")
         if not iso:

@@ -109,6 +109,11 @@ class IntentParser:
             else:
                 raw = await _parse_with_claude(self._ai_clients.get_anthropic(), system, history_messages, text)
 
+            if raw.startswith("```"):
+                raw = raw.split("```", 2)[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+                raw = raw.rstrip("`").strip()
             data = json.loads(raw)
             parsed = ParsedResponse.model_validate(data, context={"tz": user.timezone})
             intent_types = [i.type for i in parsed.intents]

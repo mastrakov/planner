@@ -209,11 +209,11 @@ async def cb_task_set_due_start(callback: CallbackQuery, user: User, session: As
 async def msg_task_scheduled_at(message: Message, user: User, session: AsyncSession, state: FSMContext) -> None:
     data = await state.get_data()
     task_id: int = data["task_id"]
-    await state.clear()
 
     repo = TaskRepo(session)
     task = await repo.get_by_id(task_id)
     if not task or task.user_id != user.id:
+        await state.clear()
         await message.answer("Задача не найдена.")
         return
 
@@ -221,6 +221,7 @@ async def msg_task_scheduled_at(message: Message, user: User, session: AsyncSess
 
     # Clear value
     if text in ("убрать", "удалить", "нет", "clear", "remove", "-"):
+        await state.clear()
         await repo.update(task, scheduled_at=None)
         await message.answer(f"✓ Время выполнения для «{task.title}» удалено.")
         return
@@ -239,6 +240,7 @@ async def msg_task_scheduled_at(message: Message, user: User, session: AsyncSess
         )
         return
 
+    await state.clear()
     await repo.update(task, scheduled_at=dt)
     await message.answer(
         f"✓ Запланировано: «{task.title}» — 🕐 {fmt_full(dt, user.timezone)}"
@@ -249,11 +251,11 @@ async def msg_task_scheduled_at(message: Message, user: User, session: AsyncSess
 async def msg_task_due_date(message: Message, user: User, session: AsyncSession, state: FSMContext) -> None:
     data = await state.get_data()
     task_id: int = data["task_id"]
-    await state.clear()
 
     repo = TaskRepo(session)
     task = await repo.get_by_id(task_id)
     if not task or task.user_id != user.id:
+        await state.clear()
         await message.answer("Задача не найдена.")
         return
 
@@ -261,6 +263,7 @@ async def msg_task_due_date(message: Message, user: User, session: AsyncSession,
 
     # Clear value
     if text in ("убрать", "удалить", "нет", "clear", "remove", "-"):
+        await state.clear()
         await repo.update(task, due_date=None)
         await message.answer(f"✓ Дедлайн для «{task.title}» удалён.")
         return
@@ -279,6 +282,7 @@ async def msg_task_due_date(message: Message, user: User, session: AsyncSession,
         )
         return
 
+    await state.clear()
     await repo.update(task, due_date=dt)
     await message.answer(
         f"✓ Дедлайн установлен: «{task.title}» — 📅 {fmt_full(dt, user.timezone)}"
