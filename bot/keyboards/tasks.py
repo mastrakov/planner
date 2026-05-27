@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -41,8 +43,13 @@ def tasks_by_priority_keyboard(tasks: list[Task], user_timezone: str) -> tuple[s
     lines: list[str] = ["<b>Активные задачи:</b>"]
     numbered: list[Task] = []   # flat list to map button index → task
 
+    _FAR_FUTURE = datetime(9999, 12, 31)
+
+    def _sort_key(t: Task) -> datetime:
+        return t.scheduled_at or t.due_date or _FAR_FUTURE
+
     for prio in _PRIO_ORDER:
-        group = grouped.get(prio, [])
+        group = sorted(grouped.get(prio, []), key=_sort_key)
         if not group:
             continue
         lines.append(f"\n<b>{_PRIO_HEADERS[prio]}</b>")
