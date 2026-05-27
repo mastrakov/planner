@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Coroutine
 
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
@@ -63,6 +63,72 @@ class IntentRouter:
         if ai_clients is None:
             ai_clients = AIClients(anthropic_client=anthropic_client, openai_client=openai_client)
         self._ai_clients = ai_clients
+
+        # Dispatch table: intent type → (execute coroutine, summarize callable)
+        self._handlers: dict[
+            type,
+            tuple[
+                Callable[..., Coroutine],  # execute
+                Callable[[ParsedIntent], str],  # summarize
+            ],
+        ] = {
+            CreateTaskIntent: (
+                self._exec_create_task,
+                lambda i: f"• Создать задачу: «{i.title}»",
+            ),
+            ListTasksIntent: (
+                self._exec_list_tasks,
+                lambda i: "• Показать задачи",
+            ),
+            CompleteTaskIntent: (
+                self._exec_complete_task,
+                lambda i: f"• Завершить задачу: «{i.task_title}»",
+            ),
+            DeleteTaskIntent: (
+                self._exec_delete_task,
+                lambda i: f"• Удалить задачу: «{i.task_title}»",
+            ),
+            UpdateTaskIntent: (
+                self._exec_update_task,
+                lambda i: f"• Изменить задачу: «{i.task_title}»",
+            ),
+            CreateEventIntent: (
+                self._exec_create_event,
+                lambda i: f"• Создать событие: «{i.title}» в {i.starts_at}",
+            ),
+            ListEventsIntent: (
+                self._exec_list_events,
+                lambda i: "• Показать события",
+            ),
+            CreateReminderIntent: (
+                self._exec_create_reminder,
+                lambda i: f"• Напоминание: «{i.title}» в {i.remind_at}",
+            ),
+            ListRemindersIntent: (
+                self._exec_list_reminders,
+                lambda i: "• Показать напоминания",
+            ),
+            DeleteReminderIntent: (
+                self._exec_delete_reminder,
+                lambda i: f"• Удалить напоминание: «{i.reminder_title}»",
+            ),
+            UpdateReminderIntent: (
+                self._exec_update_reminder,
+                lambda i: f"• Изменить напоминание: «{i.reminder_title}»",
+            ),
+            GetBriefingIntent: (
+                self._exec_briefing,
+                lambda i: "• Показать брифинг",
+            ),
+            GetAnalyticsIntent: (
+                self._exec_analytics,
+                lambda i: "• Показать аналитику",
+            ),
+            AIChatIntent: (
+                self._exec_ai_chat,
+                lambda i: f"• Диалог: «{i.message[:60]}»",
+            ),
+        }
 
     async def route(
         self,
@@ -144,103 +210,38 @@ class IntentRouter:
         """Dispatch a single intent. Returns AI reply text for ai_chat intents, None otherwise."""
         logger.debug("Dispatching intent=%s for user_id=%d", intent.type, user.id)
         try:
-            if isinstance(intent, CreateTaskIntent):
-                return await self._dispatch_create_task(intent, user, message)
-
-            elif isinstance(intent, ListTasksIntent):
-                result = await self._tasks.get_tasks_for_user(user=user, intent=intent)
-                await message.answer(result, parse_mode="HTML")
-
-            elif isinstance(intent, CompleteTaskIntent):
-                result = await self._tasks.complete_task(user=user, intent=intent)
-                await message.answer(result)
-
-            elif isinstance(intent, DeleteTaskIntent):
-                result = await self._tasks.delete_task(user=user, intent=intent)
-                await message.answer(result)
-
-            elif isinstance(intent, UpdateTaskIntent):
-                result = await self._tasks.update_task(user=user, intent=intent)
-                await message.answer(result)
-
-            elif isinstance(intent, CreateEventIntent):
-                result = await self._calendar.create_event(user=user, intent=intent)
-                await message.answer(result)
-
-            elif isinstance(intent, ListEventsIntent):
-                result = await self._calendar.get_events(user=user, intent=intent)
-                await message.answer(result, parse_mode="HTML")
-
-            elif isinstance(intent, CreateReminderIntent):
-                result = await self._reminders.create(user=user, intent=intent)
-                await message.answer(result)
-
-            elif isinstance(intent, ListRemindersIntent):
-                result = await self._reminders.list_reminders(user=user, intent=intent)
-                await message.answer(result, parse_mode="HTML")
-
-            elif isinstance(intent, DeleteReminderIntent):
-                result = await self._reminders.delete_reminder(user=user, intent=intent)
-                await message.answer(result)
-
-            elif isinstance(intent, UpdateReminderIntent):
-                result = await self._reminders.update_reminder(user=user, intent=intent)
-                await message.answer(result)
-
-            elif isinstance(intent, GetBriefingIntent):
-                briefing = await self._dispatch_briefing(intent, user)
-                await message.answer(briefing.text, parse_mode="HTML", reply_markup=briefing.combined_keyboard)
-
-            elif isinstance(intent, GetAnalyticsIntent):
-                result = await self._analytics.get_stats(user=user, period=intent.period)
-                await message.answer(result, parse_mode="HTML")
-
-            elif isinstance(intent, AIChatIntent):
-                return await self._handle_ai_chat(intent, user, message, history=history)
-
+            handler_pair = self._handlers.get(type(intent))
+            if handler_pair is None:
+                logger.warning("No handler for intent type %s", type(intent).__name__)
+                return None
+            execute, _ = handler_pair
+            return await execute(intent, user, message, history)
         except Exception:
             logger.exception("Error dispatching intent %s for user %d", intent.type, user.id)
             await message.answer("Произошла ошибка при выполнении команды. Попробуйте ещё раз.")
         return None
 
-    async def _dispatch_briefing(
-        self,
-        intent: GetBriefingIntent,
-        user: User,
-    ):
-        """Route get_briefing to the right BriefingService method."""
-        import pytz
-        from datetime import datetime as _dt
-
-        tz = pytz.timezone(user.timezone)
-        now_local = _dt.now(tz).replace(tzinfo=None)
-
-        if intent.scope == "week":
-            if intent.target_date:
-                # target_date is UTC naive — convert to local
-                local_dt = pytz.utc.localize(intent.target_date).astimezone(tz).replace(tzinfo=None)
+    def _summarize(self, parsed: ParsedResponse) -> str:
+        lines: list[str] = []
+        for intent in parsed.intents:
+            handler_pair = self._handlers.get(type(intent))
+            if handler_pair:
+                _, summarize = handler_pair
+                lines.append(summarize(intent))
             else:
-                local_dt = now_local
-            # Find Monday of the target week
-            monday = local_dt - __import__("datetime").timedelta(days=local_dt.weekday())
-            return await self._briefing.build_for_week(user=user, week_start_local=monday)
-        else:
-            if intent.target_date:
-                local_dt = pytz.utc.localize(intent.target_date).astimezone(tz).replace(tzinfo=None)
-            else:
-                local_dt = now_local
-            # For today specifically use build_morning (has overdue section)
-            today_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-            target_day = local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-            if target_day == today_local:
-                return await self._briefing.build_morning(user=user)
-            return await self._briefing.build_for_date(user=user, target_local=target_day)
+                lines.append(f"• {intent.type}")
+        return "\n".join(lines)
 
-    async def _dispatch_create_task(
+    # ---------------------------------------------------------------------------
+    # _exec_* handlers — one per intent type
+    # ---------------------------------------------------------------------------
+
+    async def _exec_create_task(
         self,
         intent: CreateTaskIntent,
         user: User,
         message: Message,
+        history: list[ChatHistory] | None = None,
     ) -> str:
         """Handle create_task with list auto-classification and deadline button.
 
@@ -280,6 +281,168 @@ class IntentRouter:
             await message.answer(text, reply_markup=kb if has_buttons else None)
         return text
 
+    async def _exec_list_tasks(
+        self,
+        intent: ListTasksIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> None:
+        result = await self._tasks.get_tasks_for_user(user=user, intent=intent)
+        await message.answer(result, parse_mode="HTML")
+
+    async def _exec_complete_task(
+        self,
+        intent: CompleteTaskIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> None:
+        result = await self._tasks.complete_task(user=user, intent=intent)
+        await message.answer(result)
+
+    async def _exec_delete_task(
+        self,
+        intent: DeleteTaskIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> None:
+        result = await self._tasks.delete_task(user=user, intent=intent)
+        await message.answer(result)
+
+    async def _exec_update_task(
+        self,
+        intent: UpdateTaskIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> None:
+        result = await self._tasks.update_task(user=user, intent=intent)
+        await message.answer(result)
+
+    async def _exec_create_event(
+        self,
+        intent: CreateEventIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> None:
+        result = await self._calendar.create_event(user=user, intent=intent)
+        await message.answer(result)
+
+    async def _exec_list_events(
+        self,
+        intent: ListEventsIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> None:
+        result = await self._calendar.get_events(user=user, intent=intent)
+        await message.answer(result, parse_mode="HTML")
+
+    async def _exec_create_reminder(
+        self,
+        intent: CreateReminderIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> None:
+        result = await self._reminders.create(user=user, intent=intent)
+        await message.answer(result)
+
+    async def _exec_list_reminders(
+        self,
+        intent: ListRemindersIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> None:
+        result = await self._reminders.list_reminders(user=user, intent=intent)
+        await message.answer(result, parse_mode="HTML")
+
+    async def _exec_delete_reminder(
+        self,
+        intent: DeleteReminderIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> None:
+        result = await self._reminders.delete_reminder(user=user, intent=intent)
+        await message.answer(result)
+
+    async def _exec_update_reminder(
+        self,
+        intent: UpdateReminderIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> None:
+        result = await self._reminders.update_reminder(user=user, intent=intent)
+        await message.answer(result)
+
+    async def _exec_briefing(
+        self,
+        intent: GetBriefingIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> None:
+        briefing = await self._dispatch_briefing(intent, user)
+        await message.answer(briefing.text, parse_mode="HTML", reply_markup=briefing.combined_keyboard)
+
+    async def _exec_analytics(
+        self,
+        intent: GetAnalyticsIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> None:
+        result = await self._analytics.get_stats(user=user, period=intent.period)
+        await message.answer(result, parse_mode="HTML")
+
+    async def _exec_ai_chat(
+        self,
+        intent: AIChatIntent,
+        user: User,
+        message: Message,
+        history: list[ChatHistory] | None = None,
+    ) -> str:
+        return await self._handle_ai_chat(intent, user, message, history=history)
+
+    async def _dispatch_briefing(
+        self,
+        intent: GetBriefingIntent,
+        user: User,
+    ):
+        """Route get_briefing to the right BriefingService method."""
+        import pytz
+        from datetime import datetime as _dt
+
+        tz = pytz.timezone(user.timezone)
+        now_local = _dt.now(tz).replace(tzinfo=None)
+
+        if intent.scope == "week":
+            if intent.target_date:
+                # target_date is UTC naive — convert to local
+                local_dt = pytz.utc.localize(intent.target_date).astimezone(tz).replace(tzinfo=None)
+            else:
+                local_dt = now_local
+            # Find Monday of the target week
+            monday = local_dt - __import__("datetime").timedelta(days=local_dt.weekday())
+            return await self._briefing.build_for_week(user=user, week_start_local=monday)
+        else:
+            if intent.target_date:
+                local_dt = pytz.utc.localize(intent.target_date).astimezone(tz).replace(tzinfo=None)
+            else:
+                local_dt = now_local
+            # For today specifically use build_morning (has overdue section)
+            today_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+            target_day = local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            if target_day == today_local:
+                return await self._briefing.build_morning(user=user)
+            return await self._briefing.build_for_date(user=user, target_local=target_day)
+
     async def _handle_ai_chat(
         self,
         intent: AIChatIntent,
@@ -287,6 +450,7 @@ class IntentRouter:
         message: Message,
         history: list[ChatHistory] | None = None,
     ) -> str:
+        from bot.config import settings
         from bot.db.models import AIModel
 
         # Build conversation history for context.
@@ -316,36 +480,3 @@ class IntentRouter:
 
         await message.answer(text)
         return text
-
-    def _summarize(self, parsed: ParsedResponse) -> str:
-        lines: list[str] = []
-        for intent in parsed.intents:
-            if isinstance(intent, CreateTaskIntent):
-                lines.append(f"• Создать задачу: «{intent.title}»")
-            elif isinstance(intent, CompleteTaskIntent):
-                lines.append(f"• Завершить задачу: «{intent.task_title}»")
-            elif isinstance(intent, DeleteTaskIntent):
-                lines.append(f"• Удалить задачу: «{intent.task_title}»")
-            elif isinstance(intent, CreateEventIntent):
-                lines.append(f"• Создать событие: «{intent.title}» в {intent.starts_at}")
-            elif isinstance(intent, CreateReminderIntent):
-                lines.append(f"• Напоминание: «{intent.title}» в {intent.remind_at}")
-            elif isinstance(intent, ListTasksIntent):
-                lines.append("• Показать задачи")
-            elif isinstance(intent, ListEventsIntent):
-                lines.append("• Показать события")
-            elif isinstance(intent, ListRemindersIntent):
-                lines.append("• Показать напоминания")
-            elif isinstance(intent, DeleteReminderIntent):
-                lines.append(f"• Удалить напоминание: «{intent.reminder_title}»")
-            elif isinstance(intent, UpdateReminderIntent):
-                lines.append(f"• Изменить напоминание: «{intent.reminder_title}»")
-            elif isinstance(intent, GetBriefingIntent):
-                lines.append("• Показать брифинг")
-            elif isinstance(intent, GetAnalyticsIntent):
-                lines.append("• Показать аналитику")
-            elif isinstance(intent, AIChatIntent):
-                lines.append(f"• Диалог: «{intent.message[:60]}»")
-            else:
-                lines.append(f"• {intent.type}")
-        return "\n".join(lines)

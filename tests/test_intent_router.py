@@ -8,10 +8,20 @@ import pytest
 from bot.db.models import AIModel
 from bot.services.intent.models import (
     AIChatIntent,
+    CompleteTaskIntent,
+    CreateEventIntent,
+    CreateReminderIntent,
     CreateTaskIntent,
+    DeleteReminderIntent,
     DeleteTaskIntent,
+    GetAnalyticsIntent,
+    GetBriefingIntent,
+    ListEventsIntent,
+    ListRemindersIntent,
     ListTasksIntent,
     ParsedResponse,
+    UpdateReminderIntent,
+    UpdateTaskIntent,
 )
 from bot.services.intent.router import IntentRouter
 from bot.services.tasks import TaskCreateResult
@@ -286,3 +296,49 @@ async def test_execute_confirmed_bypasses_confidence_check() -> None:
     mocks["task_service"].create_task_smart.assert_called_once()
     # A message was sent (task confirmation)
     message.answer.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Dispatch table coverage
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dispatch_unknown_intent_type_returns_none() -> None:
+    """An intent whose type is not in the handler table returns None without raising."""
+
+    class UnknownIntent:
+        type = "unknown_intent"
+
+    router, _ = _make_router()
+    user = _make_user()
+    message = _make_message()
+
+    result = await router._dispatch(UnknownIntent(), user, message)  # type: ignore[arg-type]
+
+    assert result is None
+    message.answer.assert_not_called()
+
+
+def test_all_known_intent_types_have_handler() -> None:
+    """Every concrete intent class from the ParsedIntent union must be in _handlers."""
+    router, _ = _make_router()
+
+    known_intent_classes = [
+        CreateTaskIntent,
+        ListTasksIntent,
+        CompleteTaskIntent,
+        DeleteTaskIntent,
+        UpdateTaskIntent,
+        CreateEventIntent,
+        ListEventsIntent,
+        CreateReminderIntent,
+        ListRemindersIntent,
+        DeleteReminderIntent,
+        UpdateReminderIntent,
+        GetBriefingIntent,
+        GetAnalyticsIntent,
+        AIChatIntent,
+    ]
+
+    for cls in known_intent_classes:
+        assert cls in router._handlers, f"Missing handler for {cls.__name__}"
