@@ -55,6 +55,10 @@ def _make_event(event_id: int, title: str, starts_at: datetime) -> SimpleNamespa
     )
 
 
+def _make_reminder(reminder_id: int, title: str, remind_at: datetime) -> SimpleNamespace:
+    return SimpleNamespace(id=reminder_id, user_id=1, title=title, remind_at=remind_at, is_sent=False)
+
+
 def _make_full_repos(
     *,
     overdue: list | None = None,
@@ -62,6 +66,7 @@ def _make_full_repos(
     high_prio_no_dl: list | None = None,
     week_tasks: list | None = None,
     events: list | None = None,
+    today_reminders: list | None = None,
     event_has_reminder: bool = False,
     task_has_reminder: bool = False,
 ) -> tuple[AsyncMock, AsyncMock, AsyncMock]:
@@ -77,6 +82,7 @@ def _make_full_repos(
     cal_repo.get_for_date_range = AsyncMock(return_value=events or [])
 
     reminder_repo = AsyncMock()
+    reminder_repo.get_today = AsyncMock(return_value=today_reminders or [])
     reminder_repo.has_reminder_for_event = AsyncMock(return_value=event_has_reminder)
     reminder_repo.has_reminder_for_task_today = AsyncMock(return_value=task_has_reminder)
 
@@ -104,7 +110,7 @@ async def test_morning_briefing_contains_overdue_tasks() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos(overdue=[overdue])
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
         result = await service.build_morning_briefing(user)  # type: ignore[arg-type]
 
@@ -121,7 +127,7 @@ async def test_morning_briefing_contains_today_events() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos(events=[event], event_has_reminder=True)
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
         result = await service.build_morning_briefing(user)  # type: ignore[arg-type]
 
@@ -135,25 +141,8 @@ async def test_morning_briefing_empty_day() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos()
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="Хороший день!")):
-        service = BriefingService(session)
-        result = await service.build_morning_briefing(user)  # type: ignore[arg-type]
-
-    assert "Доброе утро" in result
-    assert "Хороший день!" in result
-
-
-@pytest.mark.asyncio
-async def test_morning_briefing_ai_comment_failure_does_not_crash() -> None:
-    session = AsyncMock()
-    user = _make_user()
-    mock_client = AsyncMock()
-    mock_client.messages.create = AsyncMock(side_effect=Exception("AI down"))
-    task_repo, cal_repo, rem_repo = _make_full_repos()
-
-    p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
     with p1, p2, p3:
-        service = BriefingService(session, anthropic_client=mock_client)
+        service = BriefingService(session)
         result = await service.build_morning_briefing(user)  # type: ignore[arg-type]
 
     assert "Доброе утро" in result
@@ -168,12 +157,12 @@ async def test_morning_briefing_contains_today_tasks() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos(today_tasks=[today_task], task_has_reminder=True)
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
         result = await service.build_morning_briefing(user)  # type: ignore[arg-type]
 
     assert "Написать отчёт" in result
-    assert "Задачи на сегодня" in result
+    assert "Задачи:" in result
 
 
 @pytest.mark.asyncio
@@ -184,12 +173,12 @@ async def test_morning_briefing_high_priority_no_deadline_block() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos(high_prio_no_dl=[hp_task])
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
         result = await service.build_morning_briefing(user)  # type: ignore[arg-type]
 
     assert "Обновить резюме" in result
-    assert "Важные задачи" in result
+    assert "Задачи:" in result
 
 
 @pytest.mark.asyncio
@@ -202,7 +191,7 @@ async def test_morning_build_returns_briefing_result_type() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos()
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
         result = await service.build_morning(user)  # type: ignore[arg-type]
 
@@ -212,67 +201,36 @@ async def test_morning_build_returns_briefing_result_type() -> None:
 
 
 @pytest.mark.asyncio
-async def test_morning_build_keyboard_has_event_reminder_button() -> None:
-    """Events without reminders should produce keyboard buttons in combined_keyboard."""
+async def test_morning_briefing_shows_today_reminders() -> None:
+    """Today's reminders appear in a dedicated section with their time."""
     session = AsyncMock()
     user = _make_user()
     now = now_utc()
-    event = _make_event(99, "Созвон", starts_at=now.replace(hour=10))
-    task_repo, cal_repo, rem_repo = _make_full_repos(events=[event], event_has_reminder=False)
+    reminder = _make_reminder(1, "Позвонить маме", remind_at=now.replace(hour=14, minute=0))
+    task_repo, cal_repo, rem_repo = _make_full_repos(today_reminders=[reminder])
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
-        result = await service.build_morning(user)  # type: ignore[arg-type]
+        result = await service.build_morning_briefing(user)  # type: ignore[arg-type]
 
-    assert result.combined_keyboard is not None
-    # At least one button with remind_event callback
-    buttons_text = [
-        btn.callback_data
-        for row in result.combined_keyboard.inline_keyboard
-        for btn in row
-    ]
-    assert any("remind_event:15:99" in cb for cb in buttons_text)
+    assert "Напоминания на сегодня" in result
+    assert "Позвонить маме" in result
 
 
 @pytest.mark.asyncio
-async def test_morning_build_no_keyboard_when_all_have_reminders() -> None:
-    """If all events and tasks already have reminders, combined_keyboard is None."""
+async def test_morning_briefing_no_reminders_section_when_empty() -> None:
+    """Reminders section is absent when there are no reminders today."""
     session = AsyncMock()
     user = _make_user()
-    now = now_utc()
-    event = _make_event(1, "Встреча", starts_at=now.replace(hour=10))
-    task_repo, cal_repo, rem_repo = _make_full_repos(events=[event], event_has_reminder=True)
+    task_repo, cal_repo, rem_repo = _make_full_repos()
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
-        result = await service.build_morning(user)  # type: ignore[arg-type]
+        result = await service.build_morning_briefing(user)  # type: ignore[arg-type]
 
-    assert result.combined_keyboard is None
-
-
-@pytest.mark.asyncio
-async def test_morning_task_reminder_button_for_today_task_without_reminder() -> None:
-    """Today-tasks without reminders produce a remind_task_morning button."""
-    session = AsyncMock()
-    user = _make_user()
-    now = now_utc()
-    today_task = _make_task(55, "Позвонить врачу", due=now.replace(hour=16))
-    task_repo, cal_repo, rem_repo = _make_full_repos(today_tasks=[today_task], task_has_reminder=False)
-
-    p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
-        service = BriefingService(session)
-        result = await service.build_morning(user)  # type: ignore[arg-type]
-
-    assert result.combined_keyboard is not None
-    buttons = [
-        btn.callback_data
-        for row in result.combined_keyboard.inline_keyboard
-        for btn in row
-    ]
-    assert any("remind_task_morning:55" in cb for cb in buttons)
+    assert "Напоминания на сегодня" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +246,7 @@ async def test_build_weekly_plan_with_tasks_contains_titles() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos(week_tasks=[task])
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
         result = await service.build_weekly_plan(user)  # type: ignore[arg-type]
 
@@ -305,7 +263,7 @@ async def test_build_weekly_plan_with_events_contains_event_titles() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos(events=[event], event_has_reminder=True)
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
         result = await service.build_weekly_plan(user)  # type: ignore[arg-type]
 
@@ -320,7 +278,7 @@ async def test_build_weekly_plan_empty_week_only_header() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos()
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
         result = await service.build_weekly_plan(user)  # type: ignore[arg-type]
 
@@ -338,7 +296,7 @@ async def test_build_weekly_high_priority_no_deadline_block() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos(high_prio_no_dl=[hp_task])
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
         result = await service.build_weekly_plan(user)  # type: ignore[arg-type]
 
@@ -358,7 +316,7 @@ async def test_build_weekly_event_reminder_buttons() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos(events=[event], event_has_reminder=False)
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
         result = await service.build_weekly(user)  # type: ignore[arg-type]
 
@@ -383,7 +341,7 @@ async def test_build_weekly_no_keyboard_when_all_have_reminders() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos(events=[event], event_has_reminder=True)
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
         result = await service.build_weekly(user)  # type: ignore[arg-type]
 
@@ -401,7 +359,7 @@ async def test_build_weekly_tasks_grouped_by_list() -> None:
     task_repo, cal_repo, rem_repo = _make_full_repos(week_tasks=[task1, task2])
 
     p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
-    with p1, p2, p3, patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")):
+    with p1, p2, p3:
         service = BriefingService(session)
         result = await service.build_weekly_plan(user)  # type: ignore[arg-type]
 

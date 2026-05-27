@@ -73,12 +73,12 @@ class BriefingService:
         """Build the morning briefing.
 
         Sections:
-        1. Overdue tasks (with ✅ + 🗑 buttons)
-        2. Today's calendar events (with 🔔 button if no reminder)
-        3. Today's tasks sorted by priority DESC (with ✅ button)
-        4. High-priority tasks with no deadline (up to 5)
-        5. Reminder suggestions (inline buttons collected into combined_keyboard)
-        6. AI comment
+        1. Header
+        2. ⚠️ Overdue tasks (if any)
+        3. 📅 Today's calendar events sorted by time
+        4. ✅ Today's tasks + tasks without deadline — grouped by priority (like /tasks)
+        5. 🔔 Reminders scheduled for today
+        6. 🤖 AI comment
         """
         import pytz as _pytz
         now = now_utc()
@@ -87,101 +87,67 @@ class BriefingService:
         _day_start_local = _now_local.replace(hour=0, minute=0, second=0, microsecond=0)
         _day_end_local = _day_start_local + timedelta(days=1)
         day_start_utc = _day_start_local.astimezone(_pytz.utc).replace(tzinfo=None)
-        today_end = _day_end_local.astimezone(_pytz.utc).replace(tzinfo=None)
+        today_end_utc = _day_end_local.astimezone(_pytz.utc).replace(tzinfo=None)
 
         overdue_tasks = await self._task_repo.get_overdue(user.id, tz_name=user.timezone)
         today_tasks = await self._task_repo.get_today(user.id, tz_name=user.timezone)
-        high_priority_no_dl = await self._task_repo.get_high_priority_no_deadline(user.id, limit=5)
-        today_events = await self._calendar_repo.get_for_date_range(user.id, day_start_utc, today_end)
+        no_deadline_tasks = await self._task_repo.get_high_priority_no_deadline(user.id, limit=5)
+        today_events = await self._calendar_repo.get_for_date_range(user.id, day_start_utc, today_end_utc)
+        today_reminders = await self._reminder_repo.get_today(user.id, tz_name=user.timezone)
 
-        # Check which events already have reminders
-        events_without_reminder: list = []
-        for ev in today_events:
-            has_rem = await self._reminder_repo.has_reminder_for_event(ev.id)
-            if not has_rem:
-                events_without_reminder.append(ev)
-
-        # Check which today-tasks already have reminders
-        tasks_today_without_reminder: list = []
-        for t in today_tasks:
-            has_rem = await self._reminder_repo.has_reminder_for_task_today(t.id)
-            if not has_rem:
-                tasks_today_without_reminder.append(t)
-
-        # --- Build text ---
         lines: list[str] = []
 
-        # Header
+        # 1. Header
         weekday_ru = _weekday_ru(now)
         date_str = fmt_date(now, user.timezone)
         lines.append(f"<b>☀️ Доброе утро! {weekday_ru}, {date_str}</b>")
 
-        # 1. Overdue tasks
+        # 2. Overdue tasks
         if overdue_tasks:
             lines.append(f"\n<b>⚠️ Просрочено ({len(overdue_tasks)}):</b>")
             for t in overdue_tasks:
-                due_str = fmt_date(t.due_date, user.timezone) if t.due_date else ""
-                prio = {"high": "high", "medium": "medium", "low": "low"}.get(t.priority, "")
-                days_overdue = (now - t.due_date).days if t.due_date else 0
-                overdue_label = f"просрочено на {days_overdue} д." if days_overdue > 0 else "просрочено"
-                lines.append(f"• [{prio}] {t.title} — {overdue_label}")
+                prio_icon = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(t.priority, "")
+                cat = t.task_list.emoji if t.task_list else ""
+                days_over = (now - t.due_date).days if t.due_date else 0
+                overdue_label = f"{days_over} д." if days_over > 1 else "вчера"
+                lines.append(f"  {prio_icon} {cat} {t.title} — {overdue_label}")
 
-        # 2. Events today
+        # 3. Today's events sorted by time
         if today_events:
-            lines.append("\n<b>📅 Сегодня в календаре:</b>")
-            for ev in today_events:
+            lines.append("\n<b>📅 События сегодня:</b>")
+            for ev in sorted(today_events, key=lambda e: e.starts_at):
                 time_str = fmt_time(ev.starts_at, user.timezone)
-                reminder_hint = "  [🔔 нет напоминания]" if ev in events_without_reminder else ""
-                lines.append(f"• {time_str} — {ev.title}{reminder_hint}")
+                lines.append(f"  {time_str} — {ev.title}")
 
-        # 3. Today's tasks
-        if today_tasks:
-            lines.append(f"\n<b>✅ Задачи на сегодня ({len(today_tasks)}):</b>")
-            for t in today_tasks:
-                prio = {"high": "high", "medium": "medium", "low": "low"}.get(t.priority, "")
-                lines.append(f"• [{prio}] {t.title}")
+        # 4. Tasks: today + no-deadline, grouped by priority
+        task_pool = today_tasks + [
+            t for t in no_deadline_tasks
+            if not any(x.id == t.id for x in today_tasks)
+        ]
+        if task_pool:
+            lines.append("\n<b>✅ Задачи:</b>")
+            _PRIO_HEADERS = {"high": "🔴 Высокий", "medium": "🟡 Средний", "low": "🟢 Низкий"}
+            grouped: dict[str, list] = {"high": [], "medium": [], "low": []}
+            for t in task_pool:
+                grouped.setdefault(t.priority, []).append(t)
+            for prio in ("high", "medium", "low"):
+                group = grouped.get(prio, [])
+                if not group:
+                    continue
+                lines.append(f"  <b>{_PRIO_HEADERS[prio]}:</b>")
+                for t in group:
+                    cat = t.task_list.emoji if t.task_list else ""
+                    due = f"  📅 {fmt_date(t.due_date, user.timezone)}" if t.due_date else ""
+                    lines.append(f"    • {cat} {t.title}{due}")
 
-        # 4. High-priority tasks without deadline
-        if high_priority_no_dl:
-            lines.append("\n<b>🔥 Важные задачи (без дедлайна):</b>")
-            for t in high_priority_no_dl:
-                lines.append(f"• [high] {t.title}")
+        # 5. Today's reminders
+        if today_reminders:
+            lines.append("\n<b>🔔 Напоминания на сегодня:</b>")
+            for r in today_reminders:
+                time_str = fmt_time(r.remind_at, user.timezone)
+                lines.append(f"  {time_str} — {r.title}")
 
-        # 5. AI comment
-        context = (
-            f"Просроченных задач: {len(overdue_tasks)}. "
-            f"Событий сегодня: {len(today_events)}. "
-            f"Задач на сегодня: {len(today_tasks)}. "
-            f"Важных без дедлайна: {len(high_priority_no_dl)}."
-        )
-        ai_comment = await self._get_ai_comment(context, user)
-        if ai_comment:
-            lines.append(f"\n🤖 {ai_comment}")
-
-        text = "\n".join(lines)
-
-        # --- Build combined keyboard for reminder suggestions ---
-        kb_builder = InlineKeyboardBuilder()
-        has_buttons = False
-
-        for ev in events_without_reminder:
-            kb_builder.button(
-                text=f"🔔 {fmt_time(ev.starts_at, user.timezone)} {ev.title[:20]} — за 15 мин",
-                callback_data=f"remind_event:15:{ev.id}",
-            )
-            has_buttons = True
-
-        for t in tasks_today_without_reminder:
-            kb_builder.button(
-                text=f"🔔 {t.title[:25]} — в 09:00",
-                callback_data=f"remind_task_morning:{t.id}",
-            )
-            has_buttons = True
-
-        kb_builder.adjust(1)
-        combined_kb = kb_builder.as_markup() if has_buttons else None
-
-        return BriefingResult(text=text, combined_keyboard=combined_kb)
+        return BriefingResult(text="\n".join(lines), combined_keyboard=None)
 
     # ------------------------------------------------------------------
     # Weekly plan
