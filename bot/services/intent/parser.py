@@ -1,37 +1,43 @@
+from __future__ import annotations
+
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-import anthropic
 import pytz
-from openai import AsyncOpenAI
 
-from bot.config import settings
 from bot.db.models import AIModel, ChatHistory, User
 from bot.db.repo.tasks import TaskRepo
 from bot.services.intent.models import ParsedResponse
 from bot.services.intent.prompts import build_system_prompt
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    import anthropic
+    from openai import AsyncOpenAI
 
-_anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-_openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+logger = logging.getLogger(__name__)
 
 
 def _current_dt_for_user(tz_name: str) -> datetime:
     """Return current local time for the user, WITH tzinfo so the prompt includes the UTC offset."""
     tz = pytz.timezone(tz_name)
-    return datetime.now(tz=timezone.utc).astimezone(tz)
+    return datetime.now(tz=UTC).astimezone(tz)
 
 
 def _history_to_messages(history: list[ChatHistory]) -> list[dict[str, str]]:
     return [{"role": h.role, "content": h.content} for h in history]
 
 
-async def _parse_with_claude(system: str, messages: list[dict[str, str]], text: str) -> str:
+async def _parse_with_claude(
+    client: anthropic.AsyncAnthropic,
+    system: str,
+    messages: list[dict[str, str]],
+    text: str,
+) -> str:
     all_messages = messages + [{"role": "user", "content": text}]
     logger.debug("Claude request: history_len=%d text=%r", len(messages), text)
-    response = await _anthropic_client.messages.create(
+    response = await client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=1024,
         system=system,
@@ -42,10 +48,15 @@ async def _parse_with_claude(system: str, messages: list[dict[str, str]], text: 
     return raw
 
 
-async def _parse_with_gpt4o(system: str, messages: list[dict[str, str]], text: str) -> str:
+async def _parse_with_gpt4o(
+    client: AsyncOpenAI,
+    system: str,
+    messages: list[dict[str, str]],
+    text: str,
+) -> str:
     all_messages = [{"role": "system", "content": system}] + messages + [{"role": "user", "content": text}]
     logger.debug("GPT-4o request: history_len=%d text=%r", len(messages), text)
-    response = await _openai_client.chat.completions.create(
+    response = await client.chat.completions.create(
         model="gpt-4o",
         max_tokens=1024,
         messages=all_messages,  # type: ignore[arg-type]
@@ -57,8 +68,31 @@ async def _parse_with_gpt4o(system: str, messages: list[dict[str, str]], text: s
 
 
 class IntentParser:
-    def __init__(self, task_repo: TaskRepo) -> None:
+    def __init__(
+        self,
+        task_repo: TaskRepo,
+        anthropic_client: anthropic.AsyncAnthropic | None = None,
+        openai_client: AsyncOpenAI | None = None,
+    ) -> None:
         self._task_repo = task_repo
+        self._anthropic_client = anthropic_client
+        self._openai_client = openai_client
+
+    def _get_anthropic_client(self) -> anthropic.AsyncAnthropic:
+        if self._anthropic_client is None:
+            import anthropic as _anthropic
+
+            from bot.config import settings
+            self._anthropic_client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        return self._anthropic_client
+
+    def _get_openai_client(self) -> AsyncOpenAI:
+        if self._openai_client is None:
+            from openai import AsyncOpenAI
+
+            from bot.config import settings
+            self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        return self._openai_client
 
     async def parse(
         self,
@@ -79,9 +113,9 @@ class IntentParser:
         )
         try:
             if user.ai_model == AIModel.GPT4O:
-                raw = await _parse_with_gpt4o(system, history_messages, text)
+                raw = await _parse_with_gpt4o(self._get_openai_client(), system, history_messages, text)
             else:
-                raw = await _parse_with_claude(system, history_messages, text)
+                raw = await _parse_with_claude(self._get_anthropic_client(), system, history_messages, text)
 
             data = json.loads(raw)
             parsed = ParsedResponse.model_validate(data)

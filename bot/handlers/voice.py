@@ -18,7 +18,7 @@ router = Router()
 
 @router.message(F.voice)
 async def handle_voice(message: Message, user: User, session: AsyncSession, bot: Bot) -> None:
-    logger.info("handle_voice: received voice message from user %d", user.id)
+    logger.info("Received voice message from user %d", user.id)
 
     from bot.services.analytics import AnalyticsService
     from bot.services.briefing import BriefingService

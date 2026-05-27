@@ -25,10 +25,6 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 
 @router.message()
 async def handle_text(message: Message, user: User, session: AsyncSession, state: FSMContext) -> None:
-    logger.info(
-        "handle_text catch-all: user=%d content_type=%s has_text=%s has_voice=%s",
-        user.id, message.content_type, bool(message.text), bool(message.voice),
-    )
     if not message.text:
         return
 

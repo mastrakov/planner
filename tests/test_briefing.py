@@ -122,11 +122,12 @@ async def test_briefing_empty_day() -> None:
 async def test_briefing_ai_comment_failure_does_not_crash() -> None:
     session = AsyncMock()
     user = _make_user()
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(side_effect=Exception("AI down"))
 
     with (
         patch("bot.services.briefing.TaskRepo") as MockTaskRepo,
         patch("bot.services.briefing.CalendarRepo") as MockCalRepo,
-        patch("bot.services.briefing._anthropic_client") as mock_client,
     ):
         task_repo = MockTaskRepo.return_value
         task_repo.get_overdue = AsyncMock(return_value=[])
@@ -135,9 +136,86 @@ async def test_briefing_ai_comment_failure_does_not_crash() -> None:
         cal_repo = MockCalRepo.return_value
         cal_repo.get_for_date_range = AsyncMock(return_value=[])
 
-        mock_client.messages.create = AsyncMock(side_effect=Exception("AI down"))
-
-        service = BriefingService(session)
+        service = BriefingService(session, anthropic_client=mock_client)
         result = await service.build_morning_briefing(user)  # type: ignore[arg-type]
 
     assert "Доброе утро" in result
+
+
+# ---------------------------------------------------------------------------
+# build_weekly_plan
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_build_weekly_plan_with_tasks_contains_titles() -> None:
+    session = AsyncMock()
+    user = _make_user()
+    now = now_utc()
+    from datetime import timedelta
+    task = _make_task(1, "Сделать отчёт", due=now + timedelta(days=3))
+
+    with (
+        patch("bot.services.briefing.TaskRepo") as MockTaskRepo,
+        patch("bot.services.briefing.CalendarRepo") as MockCalRepo,
+        patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")),
+    ):
+        task_repo = MockTaskRepo.return_value
+        task_repo.get_by_user = AsyncMock(return_value=[task])
+
+        cal_repo = MockCalRepo.return_value
+        cal_repo.get_for_date_range = AsyncMock(return_value=[])
+
+        service = BriefingService(session)
+        result = await service.build_weekly_plan(user)  # type: ignore[arg-type]
+
+    assert "Сделать отчёт" in result
+    assert "Задачи с дедлайном" in result
+
+
+@pytest.mark.asyncio
+async def test_build_weekly_plan_with_events_contains_event_titles() -> None:
+    session = AsyncMock()
+    user = _make_user()
+    now = now_utc()
+    event = _make_event(1, "Конференция по Python", starts_at=now.replace(hour=14))
+
+    with (
+        patch("bot.services.briefing.TaskRepo") as MockTaskRepo,
+        patch("bot.services.briefing.CalendarRepo") as MockCalRepo,
+        patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")),
+    ):
+        task_repo = MockTaskRepo.return_value
+        task_repo.get_by_user = AsyncMock(return_value=[])
+
+        cal_repo = MockCalRepo.return_value
+        cal_repo.get_for_date_range = AsyncMock(return_value=[event])
+
+        service = BriefingService(session)
+        result = await service.build_weekly_plan(user)  # type: ignore[arg-type]
+
+    assert "Конференция по Python" in result
+    assert "События" in result
+
+
+@pytest.mark.asyncio
+async def test_build_weekly_plan_empty_week_only_header() -> None:
+    session = AsyncMock()
+    user = _make_user()
+
+    with (
+        patch("bot.services.briefing.TaskRepo") as MockTaskRepo,
+        patch("bot.services.briefing.CalendarRepo") as MockCalRepo,
+        patch.object(BriefingService, "_get_ai_comment", new=AsyncMock(return_value="")),
+    ):
+        task_repo = MockTaskRepo.return_value
+        task_repo.get_by_user = AsyncMock(return_value=[])
+
+        cal_repo = MockCalRepo.return_value
+        cal_repo.get_for_date_range = AsyncMock(return_value=[])
+
+        service = BriefingService(session)
+        result = await service.build_weekly_plan(user)  # type: ignore[arg-type]
+
+    assert "План на неделю" in result
+    assert "Задачи" not in result
+    assert "События" not in result

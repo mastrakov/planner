@@ -8,6 +8,7 @@ from aiogram.types import Message
 
 from bot.db.models import ChatHistory, User
 from bot.services.intent.models import (
+    DESTRUCTIVE_INTENT_TYPES,
     AIChatIntent,
     CompleteTaskIntent,
     CreateEventIntent,
@@ -15,7 +16,6 @@ from bot.services.intent.models import (
     CreateTaskIntent,
     DeleteReminderIntent,
     DeleteTaskIntent,
-    DESTRUCTIVE_INTENT_TYPES,
     GetAnalyticsIntent,
     GetBriefingIntent,
     ListEventsIntent,
@@ -28,6 +28,9 @@ from bot.services.intent.models import (
 )
 
 if TYPE_CHECKING:
+    import anthropic
+    from openai import AsyncOpenAI
+
     from bot.services.analytics import AnalyticsService
     from bot.services.briefing import BriefingService
     from bot.services.calendar import CalendarService
@@ -45,20 +48,40 @@ class IntentRouter:
         reminder_service: ReminderService,
         briefing_service: BriefingService,
         analytics_service: AnalyticsService,
+        anthropic_client: anthropic.AsyncAnthropic | None = None,
+        openai_client: AsyncOpenAI | None = None,
     ) -> None:
         self._tasks = task_service
         self._calendar = calendar_service
         self._reminders = reminder_service
         self._briefing = briefing_service
         self._analytics = analytics_service
+        self._anthropic_client = anthropic_client
+        self._openai_client = openai_client
+
+    def _get_anthropic_client(self) -> anthropic.AsyncAnthropic:
+        if self._anthropic_client is None:
+            import anthropic as _anthropic
+
+            from bot.config import settings
+            self._anthropic_client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        return self._anthropic_client
+
+    def _get_openai_client(self) -> AsyncOpenAI:
+        if self._openai_client is None:
+            from openai import AsyncOpenAI
+
+            from bot.config import settings
+            self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        return self._openai_client
 
     async def route(
         self,
         parsed: ParsedResponse,
         user: User,
         message: Message,
-        state: "FSMContext | None" = None,
-        history: "list[ChatHistory] | None" = None,
+        state: FSMContext | None = None,
+        history: list[ChatHistory] | None = None,
     ) -> None:
         logger.debug(
             "Routing: user_id=%d intents=%s confidence=%.2f",
@@ -107,7 +130,7 @@ class IntentRouter:
         parsed: ParsedResponse,
         user: User,
         message: Message,
-        history: "list[ChatHistory] | None" = None,
+        history: list[ChatHistory] | None = None,
     ) -> None:
         """Execute intents that were already confirmed by the user."""
         for intent in parsed.intents:
@@ -118,7 +141,7 @@ class IntentRouter:
         intent: ParsedIntent,
         user: User,
         message: Message,
-        history: "list[ChatHistory] | None" = None,
+        history: list[ChatHistory] | None = None,
     ) -> None:
         logger.debug("Dispatching intent=%s for user_id=%d", intent.type, user.id)
         try:
@@ -186,12 +209,8 @@ class IntentRouter:
         intent: AIChatIntent,
         user: User,
         message: Message,
-        history: "list[ChatHistory] | None" = None,
+        history: list[ChatHistory] | None = None,
     ) -> None:
-        import anthropic as _anthropic
-        from openai import AsyncOpenAI
-
-        from bot.config import settings
         from bot.db.models import AIModel
 
         # Build conversation history for context (exclude current message — it's in intent.message)
@@ -201,18 +220,16 @@ class IntentRouter:
                 history_messages.append({"role": h.role, "content": h.content})
 
         if user.ai_model == AIModel.GPT4O:
-            client = AsyncOpenAI(api_key=settings.openai_api_key)
             messages = history_messages + [{"role": "user", "content": intent.message}]
-            response = await client.chat.completions.create(
+            response = await self._get_openai_client().chat.completions.create(
                 model="gpt-4o",
                 max_tokens=1024,
                 messages=messages,  # type: ignore[arg-type]
             )
             text = response.choices[0].message.content or "Нет ответа."
         else:
-            client_a = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
             messages = history_messages + [{"role": "user", "content": intent.message}]
-            resp = await client_a.messages.create(
+            resp = await self._get_anthropic_client().messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=1024,
                 messages=messages,  # type: ignore[arg-type]

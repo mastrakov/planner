@@ -1,7 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db.models import Priority, User
-from bot.utils.dt import fmt_date, fmt_full, now_utc
 from bot.db.repo.tasks import TaskRepo
 from bot.services.intent.models import (
     CompleteTaskIntent,
@@ -10,6 +9,7 @@ from bot.services.intent.models import (
     ListTasksIntent,
     UpdateTaskIntent,
 )
+from bot.utils.dt import fmt_date, fmt_full, now_utc
 
 DEFAULT_LISTS = [
     ("Работа", "💼", "#4A90D9"),
@@ -19,9 +19,9 @@ DEFAULT_LISTS = [
 
 
 class TaskService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, repo: TaskRepo | None = None) -> None:
         self._session = session
-        self._repo = TaskRepo(session)
+        self._repo = repo if repo is not None else TaskRepo(session)
 
     async def create_default_lists(self, user_id: int) -> None:
         existing = await self._repo.get_lists_by_user(user_id)
@@ -161,4 +161,4 @@ class TaskService:
         if not task:
             return "Задача не найдена."
         await self._repo.move_to_list(task, list_id)
-        return f"Задача перемещена."
+        return "Задача перемещена."

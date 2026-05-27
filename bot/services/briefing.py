@@ -31,6 +31,7 @@ class BriefingService:
     def _get_anthropic_client(self) -> anthropic.AsyncAnthropic:
         if self._anthropic_client is None:
             import anthropic as _anthropic
+
             from bot.config import settings
             self._anthropic_client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         return self._anthropic_client
@@ -38,6 +39,7 @@ class BriefingService:
     def _get_openai_client(self) -> AsyncOpenAI:
         if self._openai_client is None:
             from openai import AsyncOpenAI
+
             from bot.config import settings
             self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
         return self._openai_client

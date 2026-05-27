@@ -13,11 +13,17 @@ from bot.utils.dt import fmt_full, fmt_time, now_utc
 
 
 class CalendarService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        repo: CalendarRepo | None = None,
+        reminder_repo: ReminderRepo | None = None,
+        integration_repo: IntegrationRepo | None = None,
+    ) -> None:
         self._session = session
-        self._repo = CalendarRepo(session)
-        self._reminder_repo = ReminderRepo(session)
-        self._integration_repo = IntegrationRepo(session)
+        self._repo = repo if repo is not None else CalendarRepo(session)
+        self._reminder_repo = reminder_repo if reminder_repo is not None else ReminderRepo(session)
+        self._integration_repo = integration_repo if integration_repo is not None else IntegrationRepo(session)
 
     async def create_event(self, user: User, intent: CreateEventIntent) -> str:
         external_id: str | None = None

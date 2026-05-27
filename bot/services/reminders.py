@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 class ReminderService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, repo: ReminderRepo | None = None) -> None:
         self._session = session
-        self._repo = ReminderRepo(session)
+        self._repo = repo if repo is not None else ReminderRepo(session)
 
     async def create(self, user: User, intent: CreateReminderIntent) -> str:
         reminder = await self._repo.create(

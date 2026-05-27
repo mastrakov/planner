@@ -1,5 +1,4 @@
 import asyncio
-from logging.config import fileConfig
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
@@ -14,9 +13,9 @@ from bot.config import settings
 # Alembic Config object
 config = context.config
 
-# Set up loggers from alembic.ini
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# Logging is configured centrally in bot/entrypoints.py before migrations run.
+# We skip alembic's fileConfig here to avoid it overwriting the root logger
+# level and handlers that were already set up by our app.
 
 # Point autogenerate at our metadata
 target_metadata = Base.metadata

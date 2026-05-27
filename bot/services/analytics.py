@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.db.models import AIModel, Task, TaskEvent, TaskEventType, User
+from bot.db.models import AIModel, User
+from bot.db.repo.analytics import AnalyticsRepo
 from bot.db.repo.tasks import TaskRepo
 from bot.utils.dt import now_utc
 
@@ -21,15 +20,19 @@ class AnalyticsService:
         session: AsyncSession,
         anthropic_client: anthropic.AsyncAnthropic | None = None,
         openai_client: AsyncOpenAI | None = None,
+        analytics_repo: AnalyticsRepo | None = None,
+        task_repo: TaskRepo | None = None,
     ) -> None:
         self._session = session
-        self._task_repo = TaskRepo(session)
+        self._task_repo = task_repo if task_repo is not None else TaskRepo(session)
+        self._analytics_repo = analytics_repo if analytics_repo is not None else AnalyticsRepo(session)
         self._anthropic_client = anthropic_client
         self._openai_client = openai_client
 
     def _get_anthropic_client(self) -> anthropic.AsyncAnthropic:
         if self._anthropic_client is None:
             import anthropic as _anthropic
+
             from bot.config import settings
             self._anthropic_client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         return self._anthropic_client
@@ -37,6 +40,7 @@ class AnalyticsService:
     def _get_openai_client(self) -> AsyncOpenAI:
         if self._openai_client is None:
             from openai import AsyncOpenAI
+
             from bot.config import settings
             self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
         return self._openai_client
@@ -48,61 +52,19 @@ class AnalyticsService:
         return await self.get_weekly_stats(user)
 
     async def get_weekly_stats(self, user: User) -> str:
+        from datetime import timedelta
         now = now_utc()
         week_ago = now - timedelta(days=7)
 
-        # Tasks completed this week
-        completed_result = await self._session.execute(
-            select(func.count(TaskEvent.id))
-            .where(TaskEvent.user_id == user.id)
-            .where(TaskEvent.event_type == TaskEventType.COMPLETED)
-            .where(TaskEvent.occurred_at >= week_ago)
-        )
-        completed_count = completed_result.scalar_one()
-
-        # Tasks created this week
-        created_result = await self._session.execute(
-            select(func.count(TaskEvent.id))
-            .where(TaskEvent.user_id == user.id)
-            .where(TaskEvent.event_type == TaskEventType.CREATED)
-            .where(TaskEvent.occurred_at >= week_ago)
-        )
-        created_count = created_result.scalar_one()
-
-        # Daily breakdown of completions
-        daily: dict[str, int] = {}
-        for i in range(7):
-            day = (now - timedelta(days=6 - i)).date()
-            day_start = datetime(day.year, day.month, day.day)
-            day_end = day_start + timedelta(days=1)
-            result = await self._session.execute(
-                select(func.count(TaskEvent.id))
-                .where(TaskEvent.user_id == user.id)
-                .where(TaskEvent.event_type == TaskEventType.COMPLETED)
-                .where(TaskEvent.occurred_at >= day_start)
-                .where(TaskEvent.occurred_at < day_end)
-            )
-            cnt = result.scalar_one()
-            day_label = day.strftime("%a %d.%m")
-            daily[day_label] = cnt
+        completed_count = await self._analytics_repo.get_completed_count(user.id, week_ago)
+        created_count = await self._analytics_repo.get_created_count(user.id, week_ago)
+        daily = await self._analytics_repo.get_completed_per_day(user.id, days=7)
 
         # By-list stats
         lists = await self._task_repo.get_lists_by_user(user.id)
         list_stats: list[str] = []
         for lst in lists:
-            total_result = await self._session.execute(
-                select(func.count(Task.id))
-                .where(Task.user_id == user.id)
-                .where(Task.list_id == lst.id)
-            )
-            total = total_result.scalar_one()
-            done_result = await self._session.execute(
-                select(func.count(Task.id))
-                .where(Task.user_id == user.id)
-                .where(Task.list_id == lst.id)
-                .where(Task.completed_at.isnot(None))
-            )
-            done = done_result.scalar_one()
+            total, done = await self._analytics_repo.get_list_task_counts(lst.id, user.id)
             pct = round(done / total * 100) if total > 0 else 0
             list_stats.append(f"  {lst.emoji} {lst.name}: {done}/{total} ({pct}%)")
 
@@ -115,7 +77,7 @@ class AnalyticsService:
             bar_lines.append(f"  {day_label}: {bar} {cnt}")
 
         lines: list[str] = [
-            f"<b>Статистика за неделю</b>",
+            "<b>Статистика за неделю</b>",
             f"\nСоздано задач: {created_count}",
             f"Выполнено: {completed_count}",
         ]
@@ -133,56 +95,18 @@ class AnalyticsService:
         return "\n".join(lines)
 
     async def get_monthly_stats(self, user: User) -> str:
+        from datetime import timedelta
         now = now_utc()
         month_ago = now - timedelta(days=30)
 
-        completed_result = await self._session.execute(
-            select(func.count(TaskEvent.id))
-            .where(TaskEvent.user_id == user.id)
-            .where(TaskEvent.event_type == TaskEventType.COMPLETED)
-            .where(TaskEvent.occurred_at >= month_ago)
-        )
-        completed_count = completed_result.scalar_one()
-
-        created_result = await self._session.execute(
-            select(func.count(TaskEvent.id))
-            .where(TaskEvent.user_id == user.id)
-            .where(TaskEvent.event_type == TaskEventType.CREATED)
-            .where(TaskEvent.occurred_at >= month_ago)
-        )
-        created_count = created_result.scalar_one()
-
-        # Weekly breakdown (4 weeks)
-        weekly: dict[str, int] = {}
-        for i in range(4):
-            week_start = now - timedelta(days=(3 - i) * 7 + 7)
-            week_end = week_start + timedelta(days=7)
-            result = await self._session.execute(
-                select(func.count(TaskEvent.id))
-                .where(TaskEvent.user_id == user.id)
-                .where(TaskEvent.event_type == TaskEventType.COMPLETED)
-                .where(TaskEvent.occurred_at >= week_start)
-                .where(TaskEvent.occurred_at < week_end)
-            )
-            label = f"Неделя {i + 1} ({week_start.strftime('%d.%m')}–{week_end.strftime('%d.%m')})"
-            weekly[label] = result.scalar_one()
+        completed_count = await self._analytics_repo.get_completed_count(user.id, month_ago)
+        created_count = await self._analytics_repo.get_created_count(user.id, month_ago)
+        weekly = await self._analytics_repo.get_completed_per_week(user.id, weeks=4)
 
         lists = await self._task_repo.get_lists_by_user(user.id)
         list_stats: list[str] = []
         for lst in lists:
-            total_result = await self._session.execute(
-                select(func.count(Task.id))
-                .where(Task.user_id == user.id)
-                .where(Task.list_id == lst.id)
-            )
-            total = total_result.scalar_one()
-            done_result = await self._session.execute(
-                select(func.count(Task.id))
-                .where(Task.user_id == user.id)
-                .where(Task.list_id == lst.id)
-                .where(Task.completed_at.isnot(None))
-            )
-            done = done_result.scalar_one()
+            total, done = await self._analytics_repo.get_list_task_counts(lst.id, user.id)
             pct = round(done / total * 100) if total > 0 else 0
             list_stats.append(f"  {lst.emoji} {lst.name}: {done}/{total} ({pct}%)")
 

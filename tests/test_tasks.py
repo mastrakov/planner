@@ -1,4 +1,4 @@
-from bot.utils.dt import now_utc
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -10,8 +10,10 @@ from bot.services.intent.models import (
     CreateTaskIntent,
     DeleteTaskIntent,
     ListTasksIntent,
+    UpdateTaskIntent,
 )
-from bot.services.tasks import TaskService
+from bot.services.tasks import DEFAULT_LISTS, TaskService
+from bot.utils.dt import now_utc
 
 
 def _make_user() -> SimpleNamespace:
@@ -191,7 +193,7 @@ async def test_create_task_matches_list_name() -> None:
         repo_instance.create = AsyncMock(return_value=created_task)
 
         service = TaskService(session)
-        result = await service.create_task(
+        await service.create_task(
             user=user,  # type: ignore[arg-type]
             intent=CreateTaskIntent(type="create_task", title="Новая задача", list_name="Дом"),
         )
@@ -199,3 +201,206 @@ async def test_create_task_matches_list_name() -> None:
     # Verify it searched for "дом" in list names
     call_kwargs = repo_instance.create.call_args
     assert call_kwargs.kwargs["list_id"] == 2
+
+
+# ---------------------------------------------------------------------------
+# complete_task / delete_task — ambiguous match
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_complete_task_ambiguous_match_no_complete_called() -> None:
+    """When multiple tasks match, complete is NOT called and disambiguation returned."""
+    session = AsyncMock()
+    user = _make_user()
+    tasks = [
+        _make_task(1, "Купить молоко"),
+        _make_task(2, "Купить хлеб"),
+    ]
+
+    repo = AsyncMock()
+    repo.get_by_user = AsyncMock(return_value=tasks)
+    repo.complete = AsyncMock()
+
+    service = TaskService(session, repo=repo)
+    result = await service.complete_task(
+        user=user,  # type: ignore[arg-type]
+        intent=CompleteTaskIntent(type="complete_task", task_title="купить"),
+    )
+
+    repo.complete.assert_not_called()
+    assert "Найдено несколько" in result
+    assert "Купить молоко" in result
+    assert "Купить хлеб" in result
+
+
+@pytest.mark.asyncio
+async def test_delete_task_ambiguous_match_no_delete_called() -> None:
+    """When multiple tasks match, delete is NOT called and disambiguation returned."""
+    session = AsyncMock()
+    user = _make_user()
+    tasks = [
+        _make_task(1, "Отправить отчёт"),
+        _make_task(2, "Отправить письмо"),
+    ]
+
+    repo = AsyncMock()
+    repo.get_by_user = AsyncMock(return_value=tasks)
+    repo.delete = AsyncMock()
+
+    service = TaskService(session, repo=repo)
+    result = await service.delete_task(
+        user=user,  # type: ignore[arg-type]
+        intent=DeleteTaskIntent(type="delete_task", task_title="отправить"),
+    )
+
+    repo.delete.assert_not_called()
+    assert "Найдено несколько" in result
+
+
+# ---------------------------------------------------------------------------
+# update_task
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_update_task_change_title() -> None:
+    session = AsyncMock()
+    user = _make_user()
+    task = _make_task(1, "Старое название")
+
+    repo = AsyncMock()
+    repo.get_by_user = AsyncMock(return_value=[task])
+    repo.update = AsyncMock()
+
+    service = TaskService(session, repo=repo)
+    result = await service.update_task(
+        user=user,  # type: ignore[arg-type]
+        intent=UpdateTaskIntent(type="update_task", task_title="Старое название", new_title="Новое название"),
+    )
+
+    repo.update.assert_called_once()
+    call_kwargs = repo.update.call_args.kwargs
+    assert call_kwargs.get("title") == "Новое название"
+    assert "обновлена" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_update_task_move_to_list() -> None:
+    session = AsyncMock()
+    user = _make_user()
+    task = _make_task(1, "Задача")
+    lists = [_make_list(1, "Работа"), _make_list(2, "Личное")]
+
+    repo = AsyncMock()
+    repo.get_by_user = AsyncMock(return_value=[task])
+    repo.get_lists_by_user = AsyncMock(return_value=lists)
+    repo.move_to_list = AsyncMock()
+    repo.update = AsyncMock()
+
+    service = TaskService(session, repo=repo)
+    result = await service.update_task(
+        user=user,  # type: ignore[arg-type]
+        intent=UpdateTaskIntent(type="update_task", task_title="Задача", new_list_name="Личное"),
+    )
+
+    repo.move_to_list.assert_called_once_with(task, 2)
+    assert "обновлена" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_update_task_not_found() -> None:
+    session = AsyncMock()
+    user = _make_user()
+
+    repo = AsyncMock()
+    repo.get_by_user = AsyncMock(return_value=[])
+
+    service = TaskService(session, repo=repo)
+    result = await service.update_task(
+        user=user,  # type: ignore[arg-type]
+        intent=UpdateTaskIntent(type="update_task", task_title="Несуществующая"),
+    )
+
+    assert "не найдена" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# create_default_lists
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_default_lists_already_has_lists_no_create_called() -> None:
+    session = AsyncMock()
+    existing_lists = [_make_list(1, "Работа")]
+
+    repo = AsyncMock()
+    repo.get_lists_by_user = AsyncMock(return_value=existing_lists)
+    repo.create_list = AsyncMock()
+
+    service = TaskService(session, repo=repo)
+    await service.create_default_lists(user_id=42)
+
+    repo.create_list.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_default_lists_no_lists_creates_three() -> None:
+    session = AsyncMock()
+
+    repo = AsyncMock()
+    repo.get_lists_by_user = AsyncMock(return_value=[])
+    repo.create_list = AsyncMock()
+
+    service = TaskService(session, repo=repo)
+    await service.create_default_lists(user_id=42)
+
+    assert repo.create_list.call_count == len(DEFAULT_LISTS)
+
+
+# ---------------------------------------------------------------------------
+# get_tasks_for_user — overdue and today filters
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_tasks_filter_overdue_returns_only_past_due() -> None:
+    now = now_utc()
+    session = AsyncMock()
+    user = _make_user()
+    overdue_task = _make_task(1, "Просроченная задача")
+    overdue_task = SimpleNamespace(**{**overdue_task.__dict__, "due_date": now - timedelta(days=2)})
+    future_task = _make_task(2, "Будущая задача")
+    future_task = SimpleNamespace(**{**future_task.__dict__, "due_date": now + timedelta(days=2)})
+
+    repo = AsyncMock()
+    repo.get_by_user = AsyncMock(return_value=[overdue_task, future_task])
+
+    service = TaskService(session, repo=repo)
+    result = await service.get_tasks_for_user(
+        user=user,  # type: ignore[arg-type]
+        intent=ListTasksIntent(type="list_tasks", filter="overdue"),
+    )
+
+    assert "Просроченная задача" in result
+    assert "Будущая задача" not in result
+
+
+@pytest.mark.asyncio
+async def test_get_tasks_filter_today_returns_only_today_tasks() -> None:
+    now = now_utc()
+    session = AsyncMock()
+    user = _make_user()
+    today_task = _make_task(1, "Сегодняшняя задача")
+    today_task = SimpleNamespace(**{**today_task.__dict__, "due_date": now.replace(hour=14, minute=0, second=0)})
+    tomorrow_task = _make_task(2, "Завтрашняя задача")
+    tomorrow_task = SimpleNamespace(**{**tomorrow_task.__dict__, "due_date": now + timedelta(days=1)})
+
+    repo = AsyncMock()
+    repo.get_by_user = AsyncMock(return_value=[today_task, tomorrow_task])
+
+    service = TaskService(session, repo=repo)
+    result = await service.get_tasks_for_user(
+        user=user,  # type: ignore[arg-type]
+        intent=ListTasksIntent(type="list_tasks", filter="today"),
+    )
+
+    assert "Сегодняшняя задача" in result
+    assert "Завтрашняя задача" not in result
