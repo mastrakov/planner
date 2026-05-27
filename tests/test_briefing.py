@@ -32,6 +32,7 @@ def _make_task(
     title: str,
     due: datetime | None = None,
     priority: str = "medium",
+    scheduled_at: datetime | None = None,
 ) -> SimpleNamespace:
     task_list = SimpleNamespace(name="Работа", emoji="💼")
     return SimpleNamespace(
@@ -40,6 +41,7 @@ def _make_task(
         title=title,
         priority=priority,
         due_date=due,
+        scheduled_at=scheduled_at,
         completed_at=None,
         task_list=task_list,
     )
@@ -389,3 +391,30 @@ def test_weekday_short_ru_returns_two_char() -> None:
     assert _weekday_short_ru(monday) == "Пн"
     friday = datetime(2026, 5, 29)
     assert _weekday_short_ru(friday) == "Пт"
+
+
+# ---------------------------------------------------------------------------
+# scheduled_at field tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_morning_briefing_task_with_scheduled_at_shows_time() -> None:
+    """A task with scheduled_at today should display its time in the morning briefing."""
+    session = AsyncMock()
+    user = _make_user()
+    now = now_utc()
+    scheduled_time = now.replace(hour=15, minute=0, second=0, microsecond=0)
+    today_task = _make_task(
+        2, "Релиз проекта", due=None, priority="high", scheduled_at=scheduled_time
+    )
+    task_repo, cal_repo, rem_repo = _make_full_repos(today_tasks=[today_task])
+
+    p1, p2, p3 = _patch_all(task_repo, cal_repo, rem_repo)
+    with p1, p2, p3:
+        service = BriefingService(session)
+        result = await service.build_morning_briefing(user)  # type: ignore[arg-type]
+
+    assert "Релиз проекта" in result
+    # The task should show a time (from fmt_time of scheduled_at)
+    # scheduled_time is UTC 15:00, Moscow (UTC+3) = 18:00
+    assert "18:" in result

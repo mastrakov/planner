@@ -26,6 +26,7 @@ def _make_reminder(
     remind_at: datetime,
     repeat: str = "none",
     event_id: int | None = None,
+    task_id: int | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=reminder_id,
@@ -34,6 +35,7 @@ def _make_reminder(
         remind_at=remind_at,
         repeat=repeat,
         event_id=event_id,
+        task_id=task_id,
         is_sent=False,
     )
 
@@ -275,3 +277,32 @@ async def test_check_and_send_exception_does_not_stop_other_reminders() -> None:
     # First failed, second succeeded
     assert repo.mark_sent.call_count == 1
     session.commit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# create — with task_id
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_reminder_with_task_id() -> None:
+    """task_id from intent is forwarded to ReminderRepo.create."""
+    remind_at = datetime(2025, 6, 15, 10, 0, 0)
+    reminder = _make_reminder(1, "Напомнить о задаче", remind_at, task_id=42)
+
+    repo = AsyncMock()
+    repo.create = AsyncMock(return_value=reminder)
+    service = _make_service(repo=repo)
+
+    await service.create(
+        user=_make_user(),  # type: ignore[arg-type]
+        intent=CreateReminderIntent(
+            type="create_reminder",
+            title="Напомнить о задаче",
+            remind_at=remind_at,
+            task_id=42,
+        ),
+    )
+
+    repo.create.assert_called_once()
+    call_kwargs = repo.create.call_args.kwargs
+    assert call_kwargs.get("task_id") == 42

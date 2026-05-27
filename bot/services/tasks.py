@@ -86,6 +86,7 @@ class TaskService:
             title=intent.title,
             priority=intent.priority,
             due_date=intent.due_date,
+            scheduled_at=intent.scheduled_at,
         )
         return TaskCreateResult(
             task=task,

@@ -22,11 +22,13 @@ class ReminderService:
         self._repo = repo if repo is not None else ReminderRepo(session)
 
     async def create(self, user: User, intent: CreateReminderIntent) -> str:
+        task_id = getattr(intent, "task_id", None)
         reminder = await self._repo.create(
             user_id=user.id,
             title=intent.title,
             remind_at=intent.remind_at,
             repeat=intent.repeat,
+            task_id=task_id,
         )
         time_str = fmt_full(reminder.remind_at, user.timezone)
         return f"Напоминание создано: «{reminder.title}» в {time_str}"

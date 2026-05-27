@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 import pytz
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -32,8 +32,10 @@ class TaskRepo:
         title: str,
         priority: str = "medium",
         due_date: datetime | None = None,
+        scheduled_at: datetime | None = None,
     ) -> Task:
-        task = Task(user_id=user_id, list_id=list_id, title=title, priority=priority, due_date=due_date)
+        task = Task(user_id=user_id, list_id=list_id, title=title, priority=priority,
+                    due_date=due_date, scheduled_at=scheduled_at)
         self._session.add(task)
         await self._session.flush()
         event = TaskEvent(task_id=task.id, user_id=user_id, event_type=TaskEventType.CREATED)
@@ -71,14 +73,18 @@ class TaskRepo:
         return list(result.scalars().all())
 
     async def get_today(self, user_id: int, tz_name: str = "UTC") -> list[Task]:
-        """Return active tasks with due_date = today in the user's timezone, sorted by priority DESC."""
+        """Return active tasks scheduled for today (via scheduled_at or due_date) in the user's timezone."""
         day_start, day_end = _day_bounds_utc(tz_name)
         stmt = (
             select(Task)
             .where(Task.user_id == user_id)
             .where(Task.completed_at.is_(None))
-            .where(Task.due_date >= day_start)
-            .where(Task.due_date < day_end)
+            .where(
+                or_(
+                    and_(Task.scheduled_at >= day_start, Task.scheduled_at < day_end),
+                    and_(Task.due_date >= day_start, Task.due_date < day_end, Task.scheduled_at.is_(None)),
+                )
+            )
             .options(selectinload(Task.task_list))
             .order_by(Task.due_date)
         )
@@ -107,13 +113,17 @@ class TaskRepo:
         return list(result.scalars().all())
 
     async def get_for_date(self, user_id: int, day_start_utc: datetime, day_end_utc: datetime) -> list[Task]:
-        """Return active tasks with due_date within [day_start, day_end) UTC."""
+        """Return active tasks with scheduled_at or due_date within [day_start, day_end) UTC."""
         stmt = (
             select(Task)
             .where(Task.user_id == user_id)
             .where(Task.completed_at.is_(None))
-            .where(Task.due_date >= day_start_utc)
-            .where(Task.due_date < day_end_utc)
+            .where(
+                or_(
+                    and_(Task.scheduled_at >= day_start_utc, Task.scheduled_at < day_end_utc),
+                    and_(Task.due_date >= day_start_utc, Task.due_date < day_end_utc, Task.scheduled_at.is_(None)),
+                )
+            )
             .options(selectinload(Task.task_list))
             .order_by(Task.due_date)
         )
@@ -139,15 +149,19 @@ class TaskRepo:
         return list(result.scalars().all())
 
     async def get_week_range(self, user_id: int, tz_name: str = "UTC") -> list[Task]:
-        """Return active tasks with due_date in [today, today+6 days] in the user's timezone."""
+        """Return active tasks with scheduled_at or due_date in [today, today+6 days] in the user's timezone."""
         day_start, _ = _day_bounds_utc(tz_name)
         week_end = day_start + timedelta(days=7)
         stmt = (
             select(Task)
             .where(Task.user_id == user_id)
             .where(Task.completed_at.is_(None))
-            .where(Task.due_date >= day_start)
-            .where(Task.due_date < week_end)
+            .where(
+                or_(
+                    and_(Task.scheduled_at >= day_start, Task.scheduled_at < week_end),
+                    and_(Task.due_date >= day_start, Task.due_date < week_end, Task.scheduled_at.is_(None)),
+                )
+            )
             .options(selectinload(Task.task_list))
             .order_by(Task.due_date)
         )

@@ -33,6 +33,7 @@ def _make_task(task_id: int, title: str, list_id: int = 1, priority: str = Prior
         title=title,
         priority=priority,
         due_date=None,
+        scheduled_at=None,
         completed_at=None,
         created_at=now_utc(),
         task_list=task_list,
@@ -557,3 +558,31 @@ async def test_create_task_smart_priority_preserved() -> None:
 
     create_kwargs = repo.create.call_args.kwargs
     assert create_kwargs["priority"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_create_task_with_scheduled_at() -> None:
+    """scheduled_at from intent is passed through to repo.create."""
+    from datetime import timezone
+    session = AsyncMock()
+    user = _make_user()
+    task_list = _make_list(1)
+    scheduled = now_utc().replace(hour=15, minute=0, second=0, microsecond=0)
+    created_task = _make_task(1, "Задача с расписанием")
+
+    repo = AsyncMock()
+    repo.get_lists_by_user = AsyncMock(return_value=[task_list])
+    repo.create = AsyncMock(return_value=created_task)
+
+    service = TaskService(session, repo=repo)
+    await service.create_task_smart(
+        user=user,  # type: ignore[arg-type]
+        intent=CreateTaskIntent(
+            type="create_task",
+            title="Задача с расписанием",
+            scheduled_at=scheduled,
+        ),
+    )
+
+    create_kwargs = repo.create.call_args.kwargs
+    assert create_kwargs["scheduled_at"] == scheduled

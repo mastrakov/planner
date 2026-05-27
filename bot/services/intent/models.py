@@ -40,6 +40,7 @@ class CreateTaskIntent(BaseModel):
     list_name: str | None = None
     priority: Literal["low", "medium", "high"] = "medium"  # AI determines from text if not explicit
     due_date: datetime | None = None                        # AI extracts from text
+    scheduled_at: datetime | None = None                    # when planned to work on (not the deadline)
     # List auto-classification fields
     suggested_list_id: int | None = None     # ID of the list AI selected
     suggested_list_name: str | None = None  # Display name for the suggested list
@@ -48,6 +49,11 @@ class CreateTaskIntent(BaseModel):
     @field_validator("due_date", mode="after")
     @classmethod
     def normalize_due_date(cls, v: datetime | None) -> datetime | None:
+        return _to_utc_naive(v)
+
+    @field_validator("scheduled_at", mode="after")
+    @classmethod
+    def normalize_scheduled_at(cls, v: datetime | None) -> datetime | None:
         return _to_utc_naive(v)
 
 
@@ -70,6 +76,7 @@ class CreateReminderIntent(BaseModel):
     title: str
     remind_at: datetime
     repeat: Literal["none", "daily", "weekly", "monthly"] = "none"
+    task_id: int | None = None  # link reminder to a task
 
     @field_validator("remind_at", mode="after")
     @classmethod
@@ -99,11 +106,17 @@ class UpdateTaskIntent(BaseModel):
     new_title: str | None = None
     new_priority: Literal["low", "medium", "high"] | None = None
     new_due_date: datetime | None = None
+    new_scheduled_at: datetime | None = None
     new_list_name: str | None = None
 
     @field_validator("new_due_date", mode="after")
     @classmethod
     def normalize_new_due_date(cls, v: datetime | None) -> datetime | None:
+        return _to_utc_naive(v)
+
+    @field_validator("new_scheduled_at", mode="after")
+    @classmethod
+    def normalize_new_scheduled_at(cls, v: datetime | None) -> datetime | None:
         return _to_utc_naive(v)
 
 

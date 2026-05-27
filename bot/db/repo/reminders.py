@@ -31,6 +31,7 @@ class ReminderRepo:
         remind_at: datetime,
         repeat: str = RepeatType.NONE,
         event_id: int | None = None,
+        task_id: int | None = None,
     ) -> Reminder:
         reminder = Reminder(
             user_id=user_id,
@@ -38,6 +39,7 @@ class ReminderRepo:
             remind_at=remind_at,
             repeat=repeat,
             event_id=event_id,
+            task_id=task_id,
         )
         self._session.add(reminder)
         await self._session.flush()
@@ -150,3 +152,23 @@ class ReminderRepo:
             .limit(1)
         )
         return result.scalar_one_or_none() is not None
+
+    async def has_reminder_for_task(self, task_id: int) -> bool:
+        """Return True if there is at least one unsent reminder linked to the task."""
+        result = await self._session.execute(
+            select(Reminder.id)
+            .where(Reminder.task_id == task_id)
+            .where(Reminder.is_sent.is_(False))
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def get_for_task(self, task_id: int) -> list[Reminder]:
+        """Return all unsent reminders for a task."""
+        result = await self._session.execute(
+            select(Reminder)
+            .where(Reminder.task_id == task_id)
+            .where(Reminder.is_sent.is_(False))
+            .order_by(Reminder.remind_at)
+        )
+        return list(result.scalars().all())

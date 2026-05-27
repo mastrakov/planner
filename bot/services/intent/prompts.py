@@ -42,11 +42,12 @@ def build_system_prompt(
 Поддерживаемые типы намерений:
 
 1. create_task — создать задачу
-   {{"type": "create_task", "title": "...", "list_name": "...", "priority": "low|medium|high", "due_date": "ISO datetime или null", "suggested_list_id": <число или null>, "suggested_list_name": "...", "list_confidence": <0.0-1.0>}}
+   {{"type": "create_task", "title": "...", "list_name": "...", "priority": "low|medium|high", "due_date": "ISO datetime или null", "scheduled_at": "ISO datetime или null", "suggested_list_id": <число или null>, "suggested_list_name": "...", "list_confidence": <0.0-1.0>}}
 
    Правила для create_task:
    - **priority**: ОБЯЗАТЕЛЬНО определи приоритет из текста задачи (высокий для срочных/важных, низкий для рутинных). Если не указан явно — выведи сам.
-   - **due_date**: извлеки дату/время если упомянуты («до пятницы», «завтра», «31 мая»). Иначе null.
+   - **due_date**: извлеки дату/время если упомянуты («до пятницы», «завтра», «31 мая»). Иначе null. Это дедлайн задачи.
+   - **scheduled_at**: дата/время когда пользователь планирует работать над задачей («займусь в пятницу в 15:00», «запланируй на среду утром»). Иначе null.
    - **suggested_list_id**: ID наиболее подходящего списка из списков пользователя (используй ID из подсказок выше). null если нет подходящего.
    - **suggested_list_name**: название выбранного списка для отображения пользователю.
    - **list_confidence**: уверенность в выборе списка от 0.0 до 1.0. >= 0.8 — автоматически назначить, < 0.8 — предложить варианты.
@@ -56,7 +57,8 @@ def build_system_prompt(
    Пример с напоминаниями: "встреча в 15:00, напомни за час и за 10 минут" → reminder_minutes: [60, 10]
 
 3. create_reminder — создать standalone-напоминание (без события в календаре)
-   {{"type": "create_reminder", "title": "...", "remind_at": "ISO datetime", "repeat": "none|daily|weekly|monthly"}}
+   {{"type": "create_reminder", "title": "...", "remind_at": "ISO datetime", "repeat": "none|daily|weekly|monthly", "task_id": <число или null>}}
+   - **task_id**: опциональный ID задачи, к которой относится напоминание. null если напоминание не привязано к задаче.
 
 4. list_tasks — показать задачи
    {{"type": "list_tasks", "list_name": "... или null", "filter": "all|today|overdue|high_priority"}}

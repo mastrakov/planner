@@ -146,3 +146,32 @@ async def test_parse_system_prompt_includes_list_names() -> None:
 
     call_kwargs = mock_client.messages.create.call_args.kwargs
     assert "Работа" in call_kwargs["system"]
+
+
+@pytest.mark.asyncio
+async def test_parse_create_task_with_scheduled_at() -> None:
+    """scheduled_at field is parsed from AI response into CreateTaskIntent."""
+    task_repo = AsyncMock()
+    task_repo.get_lists_by_user = AsyncMock(return_value=[])
+
+    response_json = json.dumps({
+        "intents": [{
+            "type": "create_task",
+            "title": "Код ревью",
+            "priority": "medium",
+            "scheduled_at": "2026-05-28T15:00:00+03:00",
+        }],
+        "confidence": 0.9,
+        "clarification_needed": None,
+    })
+    mock_client = _make_anthropic_mock(response_json)
+
+    parser = IntentParser(task_repo, anthropic_client=mock_client)
+    result = await parser.parse("займусь кодревью в среду в 15:00", _make_user(AIModel.CLAUDE), [])  # type: ignore[arg-type]
+
+    assert isinstance(result, ParsedResponse)
+    intent = result.intents[0]
+    assert isinstance(intent, CreateTaskIntent)
+    assert intent.scheduled_at is not None
+    # Should be UTC naive (converted from +03:00)
+    assert intent.scheduled_at.tzinfo is None

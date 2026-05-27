@@ -137,7 +137,12 @@ class BriefingService:
                 lines.append(f"  <b>{_PRIO_HEADERS[prio]}:</b>")
                 for t in group:
                     cat = t.task_list.emoji if t.task_list else ""
-                    due = f"  📅 {fmt_date(t.due_date, user.timezone)}" if t.due_date else ""
+                    if t.scheduled_at:
+                        due = f" — {fmt_time(t.scheduled_at, user.timezone)}"
+                    elif t.due_date:
+                        due = f"  📅 {fmt_date(t.due_date, user.timezone)}"
+                    else:
+                        due = ""
                     lines.append(f"    • {cat} {t.title}{due}")
 
         # 5. Today's reminders
@@ -318,7 +323,8 @@ class BriefingService:
             for prio in ("high", "medium", "low"):
                 for t in grouped.get(prio, []):
                     cat = t.task_list.emoji if t.task_list else ""
-                    lines.append(f"  {_PRIO_HEADERS[prio][:2]} {cat} {t.title}")
+                    time_suffix = f" — {fmt_time(t.scheduled_at, user.timezone)}" if t.scheduled_at else ""
+                    lines.append(f"  {_PRIO_HEADERS[prio][:2]} {cat} {t.title}{time_suffix}")
 
         # 4. Reminders
         if day_reminders:
@@ -368,7 +374,11 @@ class BriefingService:
             day_local = week_start_local + timedelta(days=i)
             day_start_utc, day_end_utc = _day_utc_bounds(day_local, user.timezone)
             day_events = [e for e in week_events if day_start_utc <= e.starts_at < day_end_utc]
-            day_tasks = [t for t in week_tasks if t.due_date and day_start_utc <= t.due_date < day_end_utc]
+            day_tasks = [
+                t for t in week_tasks
+                if (t.scheduled_at and day_start_utc <= t.scheduled_at < day_end_utc)
+                or (not t.scheduled_at and t.due_date and day_start_utc <= t.due_date < day_end_utc)
+            ]
             day_rems = week_reminders_by_day.get(i, [])
 
             if not day_events and not day_tasks and not day_rems:
@@ -386,7 +396,8 @@ class BriefingService:
             for t in day_tasks:
                 prio_icon = _PRIO_HEADERS.get(t.priority, "")
                 cat = t.task_list.emoji if t.task_list else ""
-                lines.append(f"  ✅ {prio_icon} {cat} {t.title}")
+                time_suffix = f" — {fmt_time(t.scheduled_at, user.timezone)}" if t.scheduled_at else ""
+                lines.append(f"  ✅ {prio_icon} {cat} {t.title}{time_suffix}")
 
             for r in day_rems:
                 lines.append(f"  🔔 {fmt_time(r.remind_at, user.timezone)} — {r.title}")

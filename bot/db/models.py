@@ -101,12 +101,14 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String(512))
     priority: Mapped[str] = mapped_column(Enum(Priority), default=Priority.MEDIUM)
     due_date: Mapped[datetime | None] = mapped_column(DateTime)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime)  # when planned to work on it
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="tasks")
     task_list: Mapped["TaskList"] = relationship(back_populates="tasks")
     events: Mapped[list["TaskEvent"]] = relationship(back_populates="task", cascade="all, delete-orphan")
+    reminders: Mapped[list["Reminder"]] = relationship(back_populates="task", cascade="all, delete-orphan")
 
     @property
     def is_completed(self) -> bool:
@@ -132,6 +134,8 @@ class Reminder(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
     # Optional link to a calendar event — None means standalone reminder
     event_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("calendar_events.id", ondelete="CASCADE"), nullable=True)
+    # Optional link to a task
+    task_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True)
     title: Mapped[str] = mapped_column(String(512))
     remind_at: Mapped[datetime] = mapped_column(DateTime)
     repeat: Mapped[str] = mapped_column(Enum(RepeatType), default=RepeatType.NONE)
@@ -140,6 +144,7 @@ class Reminder(Base):
 
     user: Mapped["User"] = relationship(back_populates="reminders")
     event: Mapped["CalendarEvent | None"] = relationship(back_populates="reminders")
+    task: Mapped["Task | None"] = relationship(back_populates="reminders")
 
 
 class CalendarEvent(Base):
