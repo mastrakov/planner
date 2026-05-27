@@ -1,7 +1,5 @@
 import asyncio
 import logging
-import os
-from contextlib import asynccontextmanager
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -17,15 +15,6 @@ from bot.services.integrations.google.calendar import GoogleCalendarProvider
 from bot.services.integrations.registry import registry
 from bot.services.scheduler import setup_scheduler
 
-_log_level = logging.DEBUG if os.getenv("ENV", "local") == "local" else logging.INFO
-logging.basicConfig(
-    level=_log_level,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-# Keep noisy libs at INFO even in local mode
-logging.getLogger("aiogram").setLevel(logging.INFO)
-logging.getLogger("aiohttp").setLevel(logging.INFO)
-logging.getLogger("sqlalchemy").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 

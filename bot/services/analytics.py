@@ -1,24 +1,45 @@
+from __future__ import annotations
+
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
-from bot.utils.dt import now_utc
-
-import anthropic
-from openai import AsyncOpenAI
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.config import settings
 from bot.db.models import AIModel, Task, TaskEvent, TaskEventType, User
 from bot.db.repo.tasks import TaskRepo
+from bot.utils.dt import now_utc
 
-_anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-_openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+if TYPE_CHECKING:
+    import anthropic
+    from openai import AsyncOpenAI
 
 
 class AnalyticsService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        anthropic_client: anthropic.AsyncAnthropic | None = None,
+        openai_client: AsyncOpenAI | None = None,
+    ) -> None:
         self._session = session
         self._task_repo = TaskRepo(session)
+        self._anthropic_client = anthropic_client
+        self._openai_client = openai_client
+
+    def _get_anthropic_client(self) -> anthropic.AsyncAnthropic:
+        if self._anthropic_client is None:
+            import anthropic as _anthropic
+            from bot.config import settings
+            self._anthropic_client = _anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        return self._anthropic_client
+
+    def _get_openai_client(self) -> AsyncOpenAI:
+        if self._openai_client is None:
+            from openai import AsyncOpenAI
+            from bot.config import settings
+            self._openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        return self._openai_client
 
     async def get_stats(self, user: User, period: str = "week") -> str:
         """Return stats for the given period ('week' or 'month')."""
@@ -206,14 +227,14 @@ class AnalyticsService:
         )
         try:
             if user.ai_model == AIModel.GPT4O:
-                resp = await _openai_client.chat.completions.create(
+                resp = await self._get_openai_client().chat.completions.create(
                     model="gpt-4o",
                     max_tokens=200,
                     messages=[{"role": "user", "content": prompt}],
                 )
                 return resp.choices[0].message.content or ""
             else:
-                resp = await _anthropic_client.messages.create(
+                resp = await self._get_anthropic_client().messages.create(
                     model="claude-sonnet-4-6",
                     max_tokens=200,
                     messages=[{"role": "user", "content": prompt}],

@@ -17,6 +17,7 @@ _openai = AsyncOpenAI(api_key=settings.openai_api_key)
 
 async def download_ogg_from_telegram(bot: Bot, voice: Voice) -> str:
     """Download voice message OGG from Telegram and return path to temp file."""
+    logger.debug("Downloading voice file_id=%s (duration=%ss)", voice.file_id, voice.duration)
     file = await bot.get_file(voice.file_id)
     file_path = file.file_path
     if not file_path:
@@ -27,12 +28,17 @@ async def download_ogg_from_telegram(bot: Bot, voice: Voice) -> str:
     os.close(fd)
 
     await bot.download_file(file_path, tmp_path)
+    size = os.path.getsize(tmp_path)
+    logger.debug("Downloaded OGG to %s (%d bytes)", tmp_path, size)
+    if size == 0:
+        raise RuntimeError("Downloaded OGG file is empty (0 bytes)")
     return tmp_path
 
 
 async def convert_to_mp3(ogg_path: str) -> str:
     """Convert OGG to MP3 via ffmpeg without blocking the event loop."""
     mp3_path = ogg_path.replace(".ogg", ".mp3")
+    logger.debug("Converting OGG→MP3: %s → %s", ogg_path, mp3_path)
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg", "-y", "-i", ogg_path, "-codec:a", "libmp3lame", mp3_path,
         stdout=asyncio.subprocess.PIPE,
@@ -40,16 +46,20 @@ async def convert_to_mp3(ogg_path: str) -> str:
     )
     _, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed: {stderr.decode()}")
+        stderr_text = stderr.decode(errors="replace")
+        logger.error("ffmpeg conversion failed (rc=%d):\n%s", proc.returncode, stderr_text)
+        raise RuntimeError(f"ffmpeg failed (rc={proc.returncode}): {stderr_text[:500]}")
+    size = os.path.getsize(mp3_path)
+    logger.debug("MP3 ready: %s (%d bytes)", mp3_path, size)
     return mp3_path
 
 
 async def transcribe(mp3_path: str) -> str:
     """Transcribe MP3 via OpenAI Whisper API."""
+    logger.debug("Transcribing %s via Whisper API", mp3_path)
     async with aiofiles.open(mp3_path, "rb") as f:
         content = await f.read()
 
-    # openai SDK expects a file-like object with a name attribute
     import io
 
     audio_file = io.BytesIO(content)
@@ -60,7 +70,9 @@ async def transcribe(mp3_path: str) -> str:
         file=audio_file,  # type: ignore[arg-type]
         language="ru",
     )
-    return response.text
+    text = response.text
+    logger.debug("Whisper result: %r", text[:100] if text else "(empty)")
+    return text
 
 
 class VoiceService:

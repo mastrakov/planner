@@ -18,6 +18,8 @@ router = Router()
 
 @router.message(F.voice)
 async def handle_voice(message: Message, user: User, session: AsyncSession, bot: Bot) -> None:
+    logger.info("handle_voice: received voice message from user %d", user.id)
+
     from bot.services.analytics import AnalyticsService
     from bot.services.briefing import BriefingService
     from bot.services.calendar import CalendarService
@@ -27,8 +29,11 @@ async def handle_voice(message: Message, user: User, session: AsyncSession, bot:
     voice_service = VoiceService(bot)
     try:
         text = await voice_service.voice_to_text(message.voice)  # type: ignore[arg-type]
-    except Exception:
-        logger.exception("Voice transcription failed for user %d", user.id)
+    except Exception as exc:
+        logger.exception(
+            "Voice transcription failed for user %d: %s: %s",
+            user.id, type(exc).__name__, exc,
+        )
         await message.answer("Не удалось распознать голосовое сообщение. Попробуйте ещё раз.")
         return
 
