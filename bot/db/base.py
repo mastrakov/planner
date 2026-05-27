@@ -12,3 +12,10 @@ async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
         yield session
+
+
+async def create_all() -> None:
+    from bot.db.models import Base  # noqa: F401 — ensure models are registered
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)

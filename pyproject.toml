@@ -19,6 +19,7 @@ dependencies = [
     "ffmpeg-python>=0.2",
     "aiofiles>=23.0",
     "alembic>=1.13",
+    "pytz>=2024.1",
 ]
 
 [dependency-groups]
