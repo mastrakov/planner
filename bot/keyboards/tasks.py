@@ -74,12 +74,28 @@ def tasks_by_priority_keyboard(tasks: list[Task], user_timezone: str) -> tuple[s
 def task_detail_keyboard(task: Task, lists: list[TaskList]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     if not task.is_completed:
-        builder.button(text="Выполнить", callback_data=f"task_complete:{task.id}")
-    builder.button(text="Удалить", callback_data=f"task_delete:{task.id}")
-    if lists:
-        builder.button(text="Переместить в список...", callback_data=f"task_move_start:{task.id}")
-    builder.button(text="Назад", callback_data="tasks_back")
-    builder.adjust(2, 1, 1)
+        builder.button(text="✅ Выполнить", callback_data=f"task_complete:{task.id}")
+    builder.button(text="🎯 Приоритет", callback_data=f"task_priority_start:{task.id}")
+    builder.button(text="🗂 Переместить", callback_data=f"task_move_start:{task.id}")
+    builder.button(text="🗑 Удалить", callback_data=f"task_delete:{task.id}")
+    builder.button(text="← Назад", callback_data="tasks_back")
+    builder.adjust(2, 2, 1)
+    return builder.as_markup()
+
+
+def priority_keyboard(task_id: int, current_priority: str) -> InlineKeyboardMarkup:
+    """Keyboard for changing task priority. Highlights the current one."""
+    builder = InlineKeyboardBuilder()
+    options = [
+        ("high",   "🔴 Высокий"),
+        ("medium", "🟡 Средний"),
+        ("low",    "🟢 Низкий"),
+    ]
+    for value, label in options:
+        text = f"✓ {label}" if value == current_priority else label
+        builder.button(text=text, callback_data=f"task_priority:{task_id}:{value}")
+    builder.button(text="← Отмена", callback_data=f"task:{task_id}")
+    builder.adjust(1)
     return builder.as_markup()
 
 

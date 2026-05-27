@@ -11,6 +11,7 @@ from bot.keyboards.tasks import (
     list_detail_keyboard,
     lists_keyboard,
     move_task_keyboard,
+    priority_keyboard,
     task_detail_keyboard,
     tasks_by_priority_keyboard,
     tasks_list_keyboard,
@@ -104,6 +105,50 @@ async def cb_task_delete_confirmed(callback: CallbackQuery, user: User, session:
     await repo.delete(task)
     await callback.answer("Задача удалена.")
     await callback.message.delete()  # type: ignore[union-attr]
+
+
+@router.callback_query(F.data.startswith("task_priority_start:"))
+async def cb_task_priority_start(callback: CallbackQuery, user: User, session: AsyncSession) -> None:
+    task_id = int(callback.data.split(":")[1])  # type: ignore[union-attr]
+    repo = TaskRepo(session)
+    task = await repo.get_by_id(task_id)
+    if not task or task.user_id != user.id:
+        await callback.answer("Задача не найдена.")
+        return
+    await callback.message.edit_text(  # type: ignore[union-attr]
+        f"<b>{task.title}</b>\nВыберите приоритет:",
+        parse_mode="HTML",
+        reply_markup=priority_keyboard(task_id, task.priority),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("task_priority:"))
+async def cb_task_priority_set(callback: CallbackQuery, user: User, session: AsyncSession) -> None:
+    parts = callback.data.split(":")  # type: ignore[union-attr]
+    task_id, new_priority = int(parts[1]), parts[2]
+    repo = TaskRepo(session)
+    task = await repo.get_by_id(task_id)
+    if not task or task.user_id != user.id:
+        await callback.answer("Задача не найдена.")
+        return
+    if task.priority == new_priority:
+        await callback.answer("Приоритет не изменился.")
+        return
+    await repo.update(task, priority=new_priority)
+    prio_label = {"high": "🔴 Высокий", "medium": "🟡 Средний", "low": "🟢 Низкий"}.get(new_priority, "")
+    await callback.answer(f"Приоритет изменён: {prio_label}")
+    # Refresh task detail view
+    lists = await repo.get_lists_by_user(user.id)
+    due_str = f"\nДедлайн: {fmt_full(task.due_date, user.timezone)}" if task.due_date else ""
+    status = "Выполнена" if task.is_completed else "Активна"
+    text = (
+        f"<b>{task.title}</b>\n"
+        f"Приоритет: {prio_label}\n"
+        f"Статус: {status}"
+        f"{due_str}"
+    )
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=task_detail_keyboard(task, lists))  # type: ignore[union-attr]
 
 
 @router.callback_query(F.data.startswith("task_move_start:"))
