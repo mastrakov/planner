@@ -1,16 +1,37 @@
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
+import pytz
 from pydantic import BaseModel, Field, field_validator
+
+# Module-level variable set by IntentParser before validating each response.
+# Pydantic validators are class-level so we use a contextvar to thread the user tz through.
+from contextvars import ContextVar
+
+_user_tz_ctx: ContextVar[str] = ContextVar("_user_tz_ctx", default="UTC")
 
 
 def _to_utc_naive(v: datetime | None) -> datetime | None:
-    """Convert aware datetime to UTC naive (strips tzinfo). Naive datetimes pass through."""
+    """Convert datetime to UTC naive for DB storage.
+
+    - Aware datetime (has tzinfo): convert to UTC, strip tzinfo.
+    - Naive datetime (no tzinfo): AI returned time without offset — treat it as
+      being in the user's local timezone (from _user_tz_ctx), then convert to UTC.
+    """
     if v is None:
         return None
     if v.tzinfo is not None:
-        v = v.astimezone(timezone.utc).replace(tzinfo=None)
-    return v
+        # Already has offset — straightforward UTC conversion
+        return v.astimezone(timezone.utc).replace(tzinfo=None)
+    # Naive — assume user's timezone
+    tz_name = _user_tz_ctx.get()
+    try:
+        tz = pytz.timezone(tz_name)
+        localized = tz.localize(v, is_dst=None)
+    except Exception:
+        # Fallback: treat as UTC if tz is invalid or DST ambiguous
+        return v
+    return localized.astimezone(pytz.utc).replace(tzinfo=None)
 
 
 class CreateTaskIntent(BaseModel):

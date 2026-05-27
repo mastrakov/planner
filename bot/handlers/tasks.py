@@ -12,6 +12,7 @@ from bot.keyboards.tasks import (
     lists_keyboard,
     move_task_keyboard,
     task_detail_keyboard,
+    tasks_by_priority_keyboard,
     tasks_list_keyboard,
 )
 
@@ -25,7 +26,8 @@ async def cmd_tasks(message: Message, user: User, session: AsyncSession) -> None
     if not tasks:
         await message.answer("У вас нет активных задач. Напишите что-нибудь чтобы создать задачу!")
         return
-    await message.answer("Активные задачи:", reply_markup=tasks_list_keyboard(tasks))
+    text, kb = tasks_by_priority_keyboard(tasks, user.timezone)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.message(Command("lists"))
@@ -134,10 +136,12 @@ async def cb_task_move(callback: CallbackQuery, user: User, session: AsyncSessio
 async def cb_tasks_back(callback: CallbackQuery, user: User, session: AsyncSession) -> None:
     repo = TaskRepo(session)
     tasks = await repo.get_by_user(user.id)
-    await callback.message.edit_text(  # type: ignore[union-attr]
-        "Активные задачи:",
-        reply_markup=tasks_list_keyboard(tasks),
-    )
+    if not tasks:
+        await callback.message.edit_text("У вас нет активных задач.")  # type: ignore[union-attr]
+        await callback.answer()
+        return
+    text, kb = tasks_by_priority_keyboard(tasks, user.timezone)
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)  # type: ignore[union-attr]
     await callback.answer()
 
 
