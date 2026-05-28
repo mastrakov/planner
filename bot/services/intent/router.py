@@ -251,44 +251,30 @@ class IntentRouter:
         user: User,
         message: Message,
         history: list[ChatHistory] | None = None,
-    ) -> str:
-        """Handle create_task with list auto-classification and deadline button.
-
-        Returns a human-readable confirmation string so it can be stored in chat
-        history — this prevents the AI from re-creating the same task when it sees
-        the next message (the previous opaque "(выполнено: create_task)" label gave
-        the model no information about what was actually created).
-        """
+    ) -> None:
         from bot.keyboards.tasks import select_list_keyboard, task_created_keyboard
-        from bot.services.tasks import TaskCreateResult
 
         result = await self._tasks.create_task_smart(user=user, intent=intent)
 
-        # No lists — error string returned
         if isinstance(result, str):
             await message.answer(result)
-            return result
+            return
 
         task = result.task
         target_list = result.target_list
 
         if result.low_confidence:
-            # Ask user which list to use — task was tentatively placed in the first candidate
             lists = await self._tasks.get_lists(user.id)
-            # Put the suggested list first
             if intent.suggested_list_id is not None:
                 lists = sorted(lists, key=lambda l: 0 if l.id == intent.suggested_list_id else 1)
             text = f"В какой список добавить «{task.title}»?"
             kb = select_list_keyboard(task.id, lists)
             await message.answer(text, reply_markup=kb)
         else:
-            # High confidence or single list — confirm to user
             text = f"Добавил в {target_list.emoji} {target_list.name}: «{task.title}»"
             kb = task_created_keyboard(task.id, has_due_date=task.due_date is not None)
-            # Only attach keyboard if there's at least one button (no deadline → show deadline button)
             has_buttons = not task.due_date
             await message.answer(text, reply_markup=kb if has_buttons else None)
-        return text
 
     async def _exec_list_tasks(
         self,
